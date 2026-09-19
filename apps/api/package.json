@@ -9,7 +9,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "start:prod": "node dist/apps/api/src/main.js"
+    "start:prod": "node dist/src/main.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1105.0",
