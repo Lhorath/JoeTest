@@ -1187,7 +1187,10 @@ export async function getUserLegalAcceptancesAsync(
   try {
     const dbRecords = await getDbLegalAcceptancesForUser(userId);
     if (dbRecords && dbRecords.length > 0) {
-      return dbRecords.map((r) => ({
+      type DbLegalAcceptance = Awaited<
+        ReturnType<typeof getDbLegalAcceptancesForUser>
+      >[number];
+      return dbRecords.map((r: DbLegalAcceptance) => ({
         id: r.id,
         userId: r.userId,
         documentSlug: r.version?.document?.slug || "terms",
