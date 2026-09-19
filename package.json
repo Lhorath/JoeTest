@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
@@ -19,7 +19,17 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,css}\"",
     "db:generate": "turbo db:generate",
-    "db:migrate": "turbo db:migrate"
+    "db:migrate": "turbo db:migrate",
+    "build:web": "npm run build --workspace=web",
+    "start:web": "npm run start --workspace=web",
+    "build:host": "npm run build --workspace=host",
+    "start:host": "npm run start --workspace=host",
+    "build:admin": "npm run build --workspace=admin",
+    "start:admin": "npm run start --workspace=admin",
+    "build:api": "npm run build --workspace=api",
+    "start:api": "npm run start --workspace=api",
+    "build:worker": "npm run build --workspace=worker",
+    "start:worker": "npm run start --workspace=worker"
   },
   "devDependencies": {
     "playwright": "^1.48.0",
@@ -36,5 +46,9 @@
     "decimal.js": "^10.6.0",
     "socket.io-client": "^4.8.3",
     "tailwindcss": "^4.3.3"
+  },
+  "overrides": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }
