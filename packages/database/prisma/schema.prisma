@@ -1,0 +1,2199 @@
+// ============================================================================
+// TheQueue - Complete Production Database and Domain Schema
+// ============================================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================================================
+// SECTION 1: Core & Users
+// ============================================================================
+
+enum AccountStatus {
+  ACTIVE
+  PENDING_EMAIL_VERIFICATION
+  SUSPENDED
+  BANNED
+  DEACTIVATED
+  DELETION_PENDING
+}
+
+model User {
+  id                        String                @id @db.Uuid
+  email                     String                @unique
+  normalizedEmail           String                @unique
+  username                  String                @unique
+  normalizedUsername        String                @unique
+  displayName               String
+  passwordHash              String
+  isHost                    Boolean               @default(false)
+  isAdmin                   Boolean               @default(false)
+  accountStatus             AccountStatus         @default(PENDING_EMAIL_VERIFICATION)
+  emailVerified             Boolean               @default(false)
+  lastLoginAt               DateTime?
+  deactivatedAt             DateTime?
+  deletionRequestedAt       DateTime?
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  deletedAt                 DateTime?
+
+  // Relations
+  profile                   UserProfile?
+  roleAssignments           UserRoleAssignment[]
+  permissionAssignments     UserPermissionAssignment[]
+  preferences               UserPreference[]
+  securityEvents            UserSecurityEvent[]
+  sessions                  UserSession[]
+  legalAcceptances          LegalAcceptance[]
+  artistIdentities          ArtistIdentity[]
+  tracks                    Track[]
+  hostApplications          HostApplication[]
+  hostProfile               HostProfile?
+  submissions               Submission[]
+  uploadIntents             UploadIntent[]
+  freeLineUsage             UserLiveSubmissionUsage[]
+  tierReservations          PriorityTierReservation[]
+  payments                  Payment[]
+  moderatedReports          Report[]              @relation("ModeratedReports")
+  filedReports              Report[]              @relation("FiledReports")
+  moderationCases           ModerationCase[]
+  moderationActions         ModerationAction[]
+  userBlocksReceived        UserBlock[]           @relation("BlockedUser")
+  userBlocksGiven           UserBlock[]           @relation("BlockingUser")
+  bannedUser                Ban[]                 @relation("BannedUser")
+  createdBans               Ban[]                 @relation("CreatedBans")
+  revokedBans               Ban[]                 @relation("RevokedBans")
+  auditLogs                 AdminAuditLog[]
+  sentInvitations           AdminInvitation[]     @relation("InvitationCreator")
+  receivedInvitation        AdminInvitation?      @relation("InvitationTarget")
+  roleChangesAsTarget       AdminRoleChange[]     @relation("RoleChangeTarget")
+  roleChangesAsActor        AdminRoleChange[]     @relation("RoleChangeActor")
+  upgradesPerformed         SubmissionUpgrade[]
+  batchOperationsPerformed  QueueBatchOperation[] @relation("BatchOpsByHost")
+  entriesMovedToHistory     QueueEntry[]          @relation("MovedToHistoryByUser")
+  slugChangesAsActor        HostSlugHistory[]     @relation("SlugChangesByUser")
+  apiIdempotencyRecords     ApiIdempotencyRecord[]
+
+  @@map("users")
+  @@index([normalizedEmail])
+  @@index([normalizedUsername])
+}
+
+model UserProfile {
+  id              String    @id @db.Uuid
+  userId          String    @unique @db.Uuid
+  biography       String?   @db.Text
+  profileImageKey String?
+  bannerImageKey  String?
+  country         String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model UserRoleAssignment {
+  id              String    @id @db.Uuid
+  userId          String    @db.Uuid
+  role            String    // OWNER_ADMIN, MODERATOR, USER, HOST
+  assignedAt      DateTime  @default(now())
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@map("user_role_assignments")
+}
+
+model UserPermissionAssignment {
+  id              String    @id @db.Uuid
+  userId          String    @db.Uuid
+  permission      String    // e.g., ADMIN_PLATFORM_FULL, STRIPE_PLATFORM_CONFIGURE, etc.
+  assignedAt      DateTime  @default(now())
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+  @@map("user_permission_assignments")
+}
+
+model UserPermission {
+  id              String    @id @db.Uuid
+  userId          String    @db.Uuid
+  permission      String    // e.g., "ADMIN_PLATFORM_FULL", "ADMIN_MODERATOR_MANAGE", etc.
+  assignedAt      DateTime  @default(now())
+
+  @@map("user_permissions")
+}
+
+model UserPreference {
+  id              String    @id @db.Uuid
+  userId          String    @db.Uuid
+  key             String
+  value           String
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@map("user_preferences")
+}
+
+model UserSecurityEvent {
+  id              String    @id @db.Uuid
+  userId          String    @db.Uuid
+  eventType       String    // e.g., "LOGIN_SUCCESS", "LOGIN_FAILED", "PASSWORD_RESET_REQUEST"
+  ipAddress       String
+  userAgent       String?
+  metadata        String?   @db.Text // JSON string
+  timestamp       DateTime  @default(now())
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_security_events")
+}
+
+// ============================================================================
+// SECTION 2: Authentication & Admin Invites
+// ============================================================================
+
+model UserSession {
+  id                String    @id @db.Uuid
+  userId            String    @db.Uuid
+  tokenHash         String    @unique // SHA-256 hash of random 32-byte session token
+  ipAddress         String?
+  userAgent         String?
+  deviceLabel       String?
+  isElevated        Boolean   @default(false) // For Admin session escalation
+  createdAt         DateTime  @default(now())
+  lastSeenAt        DateTime  @default(now())
+  idleExpiresAt     DateTime
+  absoluteExpiresAt DateTime
+  revokedAt         DateTime?
+  revocationReason  String?
+
+  // Relations
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+  @@index([tokenHash])
+  @@index([userId, revokedAt])
+}
+
+model EmailVerificationTokenRecord {
+  id              String    @id @db.Uuid
+  email           String
+  tokenHash       String    @unique // SHA-256 hash of random token
+  expiresAt       DateTime
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@map("email_verification_token_records")
+  @@index([tokenHash])
+}
+
+model PasswordResetTokenRecord {
+  id              String    @id @db.Uuid
+  email           String
+  tokenHash       String    @unique // SHA-256 hash of random token
+  expiresAt       DateTime
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@map("password_reset_token_records")
+  @@index([tokenHash])
+}
+
+model AuthenticationAttempt {
+  id              String    @id @db.Uuid
+  email           String
+  ipAddress       String
+  userAgent       String?
+  wasSuccessful   Boolean
+  failureReason   String?
+  timestamp       DateTime  @default(now())
+
+  @@map("authentication_attempts")
+  @@index([email, timestamp])
+  @@index([ipAddress, timestamp])
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+model AdminInvitation {
+  id              String            @id @db.Uuid
+  email           String            // Invited email
+  invitedUserId   String?           @unique @db.Uuid // Target user ID if known during sign-up
+  intendedRole    String            // OWNER_ADMIN, MODERATOR
+  tokenHash       String            @unique // SHA-256 hash of secure invitation token
+  createdByUserId String            @db.Uuid
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  status          InvitationStatus  @default(PENDING)
+  createdAt       DateTime          @default(now())
+
+  // Relations
+  creator         User              @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  targetUser      User?             @relation("InvitationTarget", fields: [invitedUserId], references: [id], onDelete: SetNull)
+
+  @@map("admin_invitations")
+  @@index([tokenHash])
+}
+
+model AdminRoleChange {
+  id                  String    @id @db.Uuid
+  actingAdminUserId   String    @db.Uuid
+  targetUserId        String    @db.Uuid
+  previousRole        String
+  newRole             String
+  reason              String    @db.Text
+  requestId           String?
+  sessionId           String?   @db.Uuid
+  timestamp           DateTime  @default(now())
+
+  // Relations
+  actor               User      @relation("RoleChangeActor", fields: [actingAdminUserId], references: [id], onDelete: Restrict)
+  targetUser          User      @relation("RoleChangeTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@map("admin_role_changes")
+  @@index([targetUserId, timestamp])
+}
+
+// ============================================================================
+// SECTION 2.5: API Idempotency
+// ============================================================================
+
+enum ApiIdempotencyStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model ApiIdempotencyRecord {
+  id                  String                @id @db.Uuid
+  userId              String                @db.Uuid
+  idempotencyKey      String
+  operationPath       String
+  requestFingerprint  String
+  status              ApiIdempotencyStatus  @default(PROCESSING)
+  responseData        String?               @db.Text
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  expiresAt           DateTime
+
+  // Relations
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey, operationPath])
+  @@map("api_idempotency_records")
+}
+
+// ============================================================================
+// SECTION 3: Legal
+// ============================================================================
+
+model LegalDocument {
+  id              String    @id @db.Uuid
+  slug            String    @unique // e.g. "terms", "privacy", "host-agreement"
+  title           String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  versions        LegalDocumentVersion[]
+
+  @@map("legal_documents")
+}
+
+model LegalDocumentVersion {
+  id              String    @id @db.Uuid
+  documentId      String    @db.Uuid
+  versionString   String    // e.g. "2026-08-01.1"
+  content         String    @db.Text
+  publishedAt     DateTime  @default(now())
+
+  // Relations
+  document        LegalDocument     @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  acceptances     LegalAcceptance[]
+
+  @@unique([documentId, versionString])
+  @@map("legal_document_versions")
+}
+
+model LegalAcceptance {
+  id                String    @id @db.Uuid
+  userId            String    @db.Uuid
+  versionId         String    @db.Uuid
+  ipAddress         String
+  userAgent         String?
+  acceptanceSource  String    // e.g. "SIGNUP", "HOST_UPGRADE"
+  acceptedAt        DateTime  @default(now())
+
+  // Relations
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  version           LegalDocumentVersion  @relation(fields: [versionId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, versionId])
+  @@map("legal_acceptances")
+}
+
+// ============================================================================
+// SECTION 4: Artist Identities & Music Library
+// ============================================================================
+
+model ArtistIdentity {
+  id                  String    @id @db.Uuid
+  userId              String    @db.Uuid
+  artistName          String
+  normalizedArtistName String
+  spotifyUrl          String?
+  biography           String?   @db.Text
+  profileImageKey     String?
+  isDefault           Boolean   @default(false)
+  isPublic            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tracks              Track[]
+  submissions         Submission[]
+
+  @@map("artist_identities")
+  @@index([userId])
+  @@index([normalizedArtistName])
+}
+
+enum TrackSourceType {
+  UPLOADED_AUDIO
+  YOUTUBE
+  SOUNDCLOUD
+  SPOTIFY
+  BANDCAMP
+  DIRECT_AUDIO_URL
+  OTHER_EXTERNAL
+}
+
+enum PlaybackCapability {
+  NATIVE_AUDIO
+  EMBEDDED_PLAYER
+  EXTERNAL_ONLY
+  UNSUPPORTED
+}
+
+enum ProcessingState {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum StorageStatus {
+  AVAILABLE
+  DELETION_PENDING
+  DELETED
+  MISSING
+}
+
+enum UploadIntentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+enum UploadIntentType {
+  TRACK_AUDIO
+  TRACK_ARTWORK
+}
+
+model UploadIntent {
+  id              String             @id @db.Uuid
+  userId          String             @db.Uuid
+  trackId         String             @db.Uuid
+  type            UploadIntentType
+  status          UploadIntentStatus @default(PENDING)
+  objectKey       String
+  mimeType        String
+  originalFilename String
+  fileSize        BigInt?
+  expiresAt       DateTime
+  completedAt     DateTime?
+  createdAt       DateTime           @default(now())
+
+  // Relations
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track           Track              @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@map("upload_intents")
+  @@index([userId])
+  @@index([trackId])
+}
+
+model Track {
+  id                    String              @id @db.Uuid
+  userId                String              @db.Uuid
+  artistIdentityId      String?             @db.Uuid
+  songName              String
+  normalizedSongName    String
+  albumName             String?
+  explicitContent       Boolean             @default(false)
+  releaseDate           DateTime?
+  notesForHosts         String?             @db.Text
+  sourceType            TrackSourceType
+  playbackCapability    PlaybackCapability
+  processingState       ProcessingState     @default(UPLOADING)
+  durationSeconds       Int                 @default(0) // Integer seconds
+  bpm                   Int?
+  musicalKey            String?
+  isArchived            Boolean             @default(false)
+  lastPlayedAt          DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  deletedAt             DateTime?
+
+  // Relations
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  artistIdentity        ArtistIdentity?     @relation(fields: [artistIdentityId], references: [id], onDelete: SetNull)
+  mediaVersions         TrackMediaVersion[]
+  artworks              TrackArtwork[]
+  externalSources       TrackExternalSource[]
+  genres                TrackGenre[]
+  credits               TrackCredit[]
+  submissions           Submission[]
+  uploadIntents         UploadIntent[]
+
+  @@map("tracks")
+  @@index([userId])
+  @@index([artistIdentityId])
+  @@index([normalizedSongName])
+  @@index([artistIdentityId, normalizedSongName]) // Correct compound index for search
+  @@index([lastPlayedAt])
+}
+
+model TrackMediaVersion {
+  id                  String          @id @db.Uuid
+  trackId             String          @db.Uuid
+  originalObjectKey   String
+  processedObjectKey  String?
+  mimeType            String
+  originalFilename    String
+  fileSize            BigInt
+  durationSeconds     Int
+  audioCodec          String?
+  bitrateBps          Int?
+  sampleRateHz        Int?
+  channelCount        Int?
+  processingState     ProcessingState @default(UPLOADING)
+  processingError     String?         @db.Text
+  storageStatus       StorageStatus   @default(AVAILABLE)
+  versionNumber       Int             @default(1)
+  isCurrent           Boolean         @default(true)
+  sha256Hash          String?
+  acousticFingerprint String?
+  createdAt           DateTime        @default(now())
+
+  // Relations
+  track           Track           @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@map("track_media_versions")
+  @@index([trackId, isCurrent])
+}
+
+model TrackArtwork {
+  id                  String    @id @db.Uuid
+  trackId             String    @db.Uuid
+  originalObjectKey   String
+  masterObjectKey     String?
+  thumbnailObjectKey  String?
+  width               Int
+  height              Int
+  mimeType            String
+  isPlaceholder       Boolean   @default(false)
+  storageStatus       StorageStatus @default(AVAILABLE)
+  blurHash            String?
+  dominantColor       String?   @db.VarChar(7) // Hex code e.g. #FF5733
+  createdAt           DateTime  @default(now())
+
+  // Relations
+  track           Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@map("track_artworks")
+  @@index([trackId])
+}
+
+model TrackExternalSource {
+  id              String    @id @db.Uuid
+  trackId         String    @db.Uuid
+  platform        String    // e.g. "YOUTUBE", "SOUNDCLOUD"
+  externalId      String    // Platfrom specific track ID
+  externalUrl     String
+  metaPayload     String?   @db.Text // JSON string
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  track           Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([trackId, platform, externalId])
+  @@map("track_external_sources")
+}
+
+model Genre {
+  id              String    @id @db.Uuid
+  name            String    @unique
+  normalizedName  String    @unique
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  trackGenres     TrackGenre[]
+  stationGenres   StationGenre[]
+
+  @@map("genres")
+}
+
+model TrackGenre {
+  id              String    @id @db.Uuid
+  trackId         String    @db.Uuid
+  genreId         String    @db.Uuid
+
+  // Relations
+  track           Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  genre           Genre     @relation(fields: [genreId], references: [id], onDelete: Restrict)
+
+  @@unique([trackId, genreId])
+  @@map("track_genres")
+}
+
+model TrackCredit {
+  id              String    @id @db.Uuid
+  trackId         String    @db.Uuid
+  creditName      String
+  role            String    // e.g. "PRODUCER", "LYRICIST", "VOCALIST"
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  track           Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@map("track_credits")
+}
+
+// ============================================================================
+// SECTION 5: Host Applications
+// ============================================================================
+
+enum HostApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  MORE_INFORMATION_REQUIRED
+  PAYMENT_VERIFICATION_REQUIRED
+  APPROVED
+  REJECTED
+  SUSPENDED
+  REVOKED
+  WITHDRAWN
+}
+
+model HostApplication {
+  id                      String                @id @db.Uuid
+  applicantUserId         String                @db.Uuid
+  publicHostName          String
+  normalizedHostName      String
+  country                 String
+  primaryStreamingPlatform String               // e.g. "TWITCH", "YOUTUBE"
+  primaryStreamingProfileUrl String
+  hostTermsAcceptanceId   String?               @db.Uuid // Reference to legal acceptance
+  payoutOnboardingStatus  String                @default("NOT_STARTED") // Payout config state
+  status                  HostApplicationStatus @default(DRAFT)
+  biography               String?               @db.Text
+  phoneNumber             String?
+  expectedStreamingFrequency String?
+  acceptedGenres          String?               @db.Text
+  exampleLivestreamLinks  String?               @db.Text
+  additionalNotes         String?               @db.Text
+  profileImageKey         String?
+  bannerImageKey          String?
+  submittedAt             DateTime?
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+
+  // Relations
+  applicant               User                  @relation(fields: [applicantUserId], references: [id], onDelete: Restrict)
+  statusHistory           HostApplicationStatusHistory[]
+  platforms               HostApplicationPlatform[]
+  reviews                 HostApplicationReview[]
+
+  @@map("host_applications")
+  @@index([status, submittedAt])
+}
+
+model HostApplicationPlatform {
+  id                  String    @id @db.Uuid
+  applicationId       String    @db.Uuid
+  platform            String    // KICK, YOUTUBE, TIKTOK, FACEBOOK, TWITCH
+  profileUrl          String
+  followerCount       Int?      @default(0) // Internal analytics only, not user audience metric
+
+  // Relations
+  application         HostApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, platform])
+  @@map("host_application_platforms")
+}
+
+model HostApplicationStatusHistory {
+  id              String                @id @db.Uuid
+  applicationId   String                @db.Uuid
+  previousStatus  HostApplicationStatus?
+  newStatus       HostApplicationStatus
+  changedByUserId String?               @db.Uuid
+  notes           String?               @db.Text
+  timestamp       DateTime              @default(now())
+
+  // Relations
+  application     HostApplication       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@map("host_application_status_history")
+}
+
+model HostApplicationReview {
+  id              String                @id @db.Uuid
+  applicationId   String                @db.Uuid
+  reviewerUserId  String                @db.Uuid
+  decision        String                // APPROVED, REJECTED, MORE_INFO
+  internalNotes   String?               @db.Text
+  userVisibleNotes String?              @db.Text
+  reviewedAt      DateTime              @default(now())
+
+  // Relations
+  application     HostApplication       @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+
+  @@map("host_application_reviews")
+}
+
+// ============================================================================
+// SECTION 6: Host Profiles & Stations
+// ============================================================================
+
+model HostProfile {
+  id              String    @id @db.Uuid
+  userId          String    @unique @db.Uuid
+  publicHostName  String
+  normalizedHostName String
+  biography       String?   @db.Text
+  profileImageKey String?
+  bannerImageKey  String?
+  country         String
+  isApproved      Boolean   @default(true)
+  approvedAt      DateTime  @default(now())
+  suspendedAt     DateTime?
+  revokedAt       DateTime?
+  isPublicVisible Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Public host page slug support
+  hostSlug            String
+  normalizedHostSlug  String    @unique
+  publicPageEnabled   Boolean   @default(true)
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  socialAccounts  HostSocialAccount[]
+  payoutAccounts  HostPayoutAccount[]
+  stations        Station[]
+  earnings        HostEarning[]
+  payouts         Payout[]
+  payoutHolds     PayoutHold[]
+  overlaySets     OverlaySet[]
+  slugHistory     HostSlugHistory[]
+
+  @@map("host_profiles")
+  @@index([normalizedHostName])
+  @@index([isApproved, isPublicVisible])
+}
+
+model HostSlugHistory {
+  id                    String        @id @db.Uuid
+  hostId                String        @db.Uuid
+  previousSlug          String
+  previousNormalizedSlug String
+  newSlug               String
+  newNormalizedSlug     String
+  changedByUserId       String        @db.Uuid
+  changedAt             DateTime      @default(now())
+  redirectEnabled       Boolean       @default(true)
+  redirectExpiresAt     DateTime?
+
+  // Relations
+  host                  HostProfile   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  changedByUser         User          @relation("SlugChangesByUser", fields: [changedByUserId], references: [id], onDelete: Restrict)
+
+  @@map("host_slug_histories")
+  @@index([previousNormalizedSlug])
+  @@index([newNormalizedSlug])
+}
+
+enum StreamingPlatform {
+  KICK
+  YOUTUBE
+  TIKTOK
+  FACEBOOK
+  TWITCH
+}
+
+model HostSocialAccount {
+  id              String            @id @db.Uuid
+  hostId          String            @db.Uuid
+  platform        StreamingPlatform
+  username        String
+  normalizedUsername String
+  profileUrl      String
+  isVerified      Boolean           @default(false)
+  isVisible       Boolean           @default(true)
+  isPrimary       Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Relations
+  host            HostProfile       @relation(fields: [hostId], references: [id], onDelete: Cascade)
+
+  @@unique([hostId, platform])
+  @@map("host_social_accounts")
+  @@index([platform, normalizedUsername])
+}
+
+enum PayoutProvider {
+  STRIPE
+}
+
+model HostPayoutAccount {
+  id                      String          @id @db.Uuid
+  hostId                  String          @db.Uuid
+  provider                PayoutProvider  @default(STRIPE)
+  providerAccountId       String          @unique // e.g. Stripe Connected Account ID (acct_...)
+  providerMerchantId      String?         // Stripe Merchant ID if applicable
+  country                 String
+  defaultCurrency         String          @default("USD") // Kept USD, validated
+  onboardingState         String          @default("INCOMPLETE") // e.g. active, restricted, incomplete
+  isIdentityVerified      Boolean         @default(false)
+  chargesEnabled          Boolean         @default(false)
+  payoutsEnabled          Boolean         @default(false)
+  isPrimary               Boolean         @default(true)
+  connectedAt             DateTime        @default(now())
+  lastVerifiedAt          DateTime?
+  disabledAt              DateTime?
+
+  // Relations
+  host                    HostProfile     @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  payouts                 Payout[]
+
+  @@map("host_payout_accounts")
+}
+
+enum StationStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+model Station {
+  id                        String              @id @db.Uuid
+  hostId                    String              @db.Uuid
+  stationName               String
+  normalizedStationName     String
+  description               String?             @db.Text
+  slug                      String              @unique
+  profileImageKey           String?
+  bannerImageKey            String?
+  isPublicVisible           Boolean             @default(true)
+  acceptedContentRules      String?             @db.Text
+  explicitContentAllowed    Boolean             @default(true)
+  maxTrackDurationSeconds   Int                 @default(600) // Default 10 min
+  maxQueueSize              Int                 @default(100)
+  repeatsAllowed            Boolean             @default(false)
+  duplicateTracksAllowed    Boolean             @default(false)
+  queuePositionsVisible     Boolean             @default(true)
+  waitTimeVisible           Boolean             @default(true)
+  defaultEndLiveHandling    String              @default("CLOSE_SUBMISSIONS") // CLOSE_SUBMISSIONS, PURGE, etc.
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+  deletedAt                 DateTime?
+
+  // Station Lifecycle States
+  status                    StationStatus       @default(ACTIVE)
+  statusChangedAt           DateTime            @default(now())
+  archivedAt                DateTime?
+
+  // Public Queue Visibility settings
+  publicQueueVisibilityMode   String            @default("SHOW_FULL_TRACK_INFORMATION") // SHOW_FULL_TRACK_INFORMATION, SHOW_ARTIST_ONLY, SHOW_POSITION_ONLY, HIDE_PUBLIC_QUEUE
+  showArtworkPublicly         Boolean           @default(true)
+  showArtistNamePublicly       Boolean           @default(true)
+  showSongNamePublicly         Boolean           @default(true)
+  showTierPublicly            Boolean           @default(true)
+  showQueuePositionPublicly    Boolean           @default(true)
+  showCurrentTrackPublicly     Boolean           @default(true)
+  showRecentlyPlayedPublicly    Boolean           @default(true)
+
+  // Relations
+  host                      HostProfile         @relation(fields: [hostId], references: [id], onDelete: Restrict)
+  genres                    StationGenre[]
+  settings                  StationSetting[]
+  blockedUsers              StationBlockedUser[]
+  liveSessions              LiveSession[]
+  priorityTiers             PriorityTier[]
+  batchOperations           QueueBatchOperation[]
+
+  @@map("stations")
+  @@index([isPublicVisible, deletedAt])
+}
+
+model StationGenre {
+  id              String    @id @db.Uuid
+  stationId       String    @db.Uuid
+  genreId         String    @db.Uuid
+
+  // Relations
+  station         Station   @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  genre           Genre     @relation(fields: [genreId], references: [id], onDelete: Restrict)
+
+  @@unique([stationId, genreId])
+  @@map("station_genres")
+}
+
+model StationSetting {
+  id              String    @id @db.Uuid
+  stationId       String    @db.Uuid
+  key             String
+  value           String
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  station         Station   @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([stationId, key])
+  @@map("station_settings")
+}
+
+model StationBlockedUser {
+  id              String    @id @db.Uuid
+  stationId       String    @db.Uuid
+  blockedUserId   String    @db.Uuid
+  reason          String?   @db.Text
+  blockedAt       DateTime  @default(now())
+
+  // Relations
+  station         Station   @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([stationId, blockedUserId])
+  @@map("station_blocked_users")
+}
+
+// ============================================================================
+// SECTION 7: Live Sessions & Free Line
+// ============================================================================
+
+enum LiveSessionStatus {
+  SCHEDULED
+  PREPARING
+  LIVE
+  PAUSED
+  ENDING
+  ENDED
+  CANCELLED
+}
+
+model LiveSession {
+  id                        String                @id @db.Uuid
+  stationId                 String                @db.Uuid
+  hostId                    String                @db.Uuid
+  status                    LiveSessionStatus     @default(PREPARING)
+  liveTitle                 String
+  startedAt                 DateTime?
+  endedAt                   DateTime?
+  submissionsOpen           Boolean               @default(false)
+  freeLineOpen              Boolean               @default(false)
+  paidSubmissionsOpen       Boolean               @default(false)
+  currentQueueSequence      Int                   @default(0) // tracks play order index
+  currentQueueEntryId       String?               @db.Uuid
+  currentTrackId            String?               @db.Uuid
+  primaryStreamingPlatform  StreamingPlatform
+  savedProfileUrlSnapshot   String
+  sessionLiveUrl            String?
+  linkSource                String?               @default("SYSTEM") // USER, SYSTEM
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+
+  // Playback Activity for Inactivity Sweep
+  lastPlaybackActivityAt    DateTime?
+
+  // Real-time sequencing support
+  queueRevision             Int                   @default(0)
+  publicQueueUpdatedAt      DateTime?
+
+  // Relations
+  station                   Station               @relation(fields: [stationId], references: [id], onDelete: Restrict)
+  platforms                 LiveSessionPlatform[]
+  settingsSnapshots         LiveSessionSettingsSnapshot[]
+  statusHistory             LiveSessionStatusHistory[]
+  submissions               Submission[]
+  freeLineConfigurations    FreeLineConfiguration[]
+  userUsageRecords          UserLiveSubmissionUsage[]
+  priorityTierSnapshots     LivePriorityTierSnapshot[]
+  queueEntries              QueueEntry[]
+  playbackSessions          PlaybackSession[]
+  playbackEvents            PlaybackEvent[]
+  hostEarnings              HostEarning[]
+  queueEvents               QueueEvent[]
+  batchOperations           QueueBatchOperation[]
+
+  @@map("live_sessions")
+  @@index([status])
+  @@index([stationId, status])
+}
+
+model LiveSessionPlatform {
+  id              String            @id @db.Uuid
+  liveSessionId   String            @db.Uuid
+  platform        StreamingPlatform
+  streamUrl       String
+
+  // Relations
+  liveSession     LiveSession       @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([liveSessionId, platform])
+  @@map("live_session_platforms")
+  @@index([platform])
+}
+
+model LiveSessionSettingsSnapshot {
+  id                        String      @id @db.Uuid
+  liveSessionId             String      @db.Uuid
+  maxTrackDurationSeconds   Int
+  maxQueueSize              Int
+  repeatsAllowed            Boolean
+  duplicateTracksAllowed    Boolean
+  queuePositionsVisible     Boolean
+  waitTimeVisible           Boolean
+  explicitContentAllowed    Boolean
+  createdAt                 DateTime    @default(now())
+
+  // Snapshotted public queue visibility settings
+  publicQueueVisibilityMode   String            @default("SHOW_FULL_TRACK_INFORMATION")
+  showArtworkPublicly         Boolean           @default(true)
+  showArtistNamePublicly       Boolean           @default(true)
+  showSongNamePublicly         Boolean           @default(true)
+  showTierPublicly            Boolean           @default(true)
+  showQueuePositionPublicly    Boolean           @default(true)
+  showCurrentTrackPublicly     Boolean           @default(true)
+  showRecentlyPlayedPublicly    Boolean           @default(true)
+
+  // Relations
+  liveSession               LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+
+  @@map("live_session_snapshots")
+}
+
+model LiveSessionStatusHistory {
+  id              String            @id @db.Uuid
+  liveSessionId   String            @db.Uuid
+  previousStatus  LiveSessionStatus?
+  newStatus       LiveSessionStatus
+  timestamp       DateTime          @default(now())
+
+  // Relations
+  liveSession     LiveSession       @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+
+  @@map("live_session_status_history")
+}
+
+model FreeLineConfiguration {
+  id                        String      @id @db.Uuid
+  liveSessionId             String      @db.Uuid
+  isEnabled                 Boolean     @default(true)
+  maxFreeSubmissionsPerUser Int         @default(1)
+  totalFreeCapacityLimit    Int?        // Null represents unlimited capacity
+  activeEntryCapacityLimit  Int?        // Max active queued items per user
+  createdAt                 DateTime    @default(now())
+  updatedAt                 DateTime    @updatedAt
+
+  // Relations
+  liveSession               LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  liveFreeLineSnapshots     LiveFreeLineSnapshot[]
+
+  @@map("free_line_configurations")
+}
+
+model LiveFreeLineSnapshot {
+  id                        String                @id @db.Uuid
+  configurationId           String                @db.Uuid
+  maxFreeSubmissionsPerUser Int
+  totalFreeCapacityLimit    Int?
+  activeEntryCapacityLimit  Int?
+  createdAt                 DateTime              @default(now())
+
+  // Relations
+  configuration             FreeLineConfiguration @relation(fields: [configurationId], references: [id], onDelete: Restrict)
+
+  @@map("live_free_line_snapshots")
+}
+
+model UserLiveSubmissionUsage {
+  id              String      @id @db.Uuid
+  userId          String      @db.Uuid
+  liveSessionId   String      @db.Uuid
+  freeUsedCount   Int         @default(0)
+  paidUsedCount   Int         @default(0)
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  user            User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  liveSession     LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, liveSessionId])
+  @@map("user_live_submission_usages")
+}
+
+// ============================================================================
+// SECTION 8: Paid Priority Tiers
+// ============================================================================
+
+enum TierColorSlot {
+  FREE_LINE
+  TIER_COLOR_1
+  TIER_COLOR_2
+  TIER_COLOR_3
+  TIER_COLOR_4
+  TIER_COLOR_5
+  TIER_COLOR_6
+  TIER_COLOR_7
+  TIER_COLOR_8
+  TIER_COLOR_9
+  TIER_COLOR_10
+}
+
+model PriorityTier {
+  id                          String                    @id @db.Uuid
+  stationId                   String                    @db.Uuid
+  name                        String
+  description                 String?
+  priceCents                  Int                       // Integer cents e.g. 1000 = $10.00
+  currency                    String                    @default("USD") // Strictly USD, validated
+  priorityRank                Int                       // Numerical rank, higher = more priority
+  displayOrder                Int                       @default(0)
+  isActive                    Boolean                   @default(true)
+  isUpgradeEnabled            Boolean                   @default(true)
+  maxPurchasesPerLive         Int?                      // Null represents unlimited
+  maxPurchasesPerUserPerLive  Int?
+  maxSimultaneousActiveEntries Int?
+  refundPolicyNotes           String?                   @db.Text
+  visualMetadata              String?                   @db.Text // JSON metadata
+  createdAt                   DateTime                  @default(now())
+  updatedAt                   DateTime                  @updatedAt
+  deletedAt                   DateTime?
+
+  // Globally consistent color slots
+  colorSlot                   TierColorSlot             @default(TIER_COLOR_10)
+  publicVisible               Boolean                   @default(true)
+
+  // Relations
+  station                     Station                   @relation(fields: [stationId], references: [id], onDelete: Restrict)
+  liveSnapshots               LivePriorityTierSnapshot[]
+  tierReservations            PriorityTierReservation[]
+
+  @@map("priority_tiers")
+}
+
+model LivePriorityTierSnapshot {
+  id                          String                    @id @db.Uuid
+  liveSessionId               String                    @db.Uuid
+  priorityTierId              String                    @db.Uuid
+  name                        String
+  description                 String?
+  priceCents                  Int
+  currency                    String                    @default("USD")
+  priorityRank                Int
+  isActive                    Boolean                   @default(true)
+  isUpgradeEnabled            Boolean                   @default(true)
+  maxPurchasesPerLive         Int?
+  maxPurchasesPerUserPerLive  Int?
+  maxSimultaneousActiveEntries Int?
+  refundPolicyNotes           String?                   @db.Text
+  visualMetadata              String?                   @db.Text
+  createdAt                   DateTime                  @default(now())
+
+  // Snapshotted color slots
+  colorSlot                   TierColorSlot             @default(TIER_COLOR_10)
+  publicVisible               Boolean                   @default(true)
+  displayOrder                Int                       @default(0)
+
+  // Relations
+  liveSession                 LiveSession               @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  priorityTier                PriorityTier              @relation(fields: [priorityTierId], references: [id], onDelete: Restrict)
+  submissions                 Submission[]
+  tierReservations            PriorityTierReservation[]
+  prevTierUpgrades            SubmissionUpgrade[]       @relation("PrevTierSnapshot")
+  newTierUpgrades             SubmissionUpgrade[]       @relation("NewTierSnapshot")
+
+  @@map("live_priority_tier_snapshots")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONSUMED
+  EXPIRED
+  RELEASED
+  CANCELLED
+}
+
+model PriorityTierReservation {
+  id                  String                    @id @db.Uuid
+  tierSnapshotId      String                    @db.Uuid
+  priorityTierId      String                    @db.Uuid
+  userId              String                    @db.Uuid
+  trackId             String?                   @db.Uuid
+  status              ReservationStatus         @default(ACTIVE)
+  expiresAt           DateTime
+  paymentAttemptId    String?                   @db.Uuid
+  releasedAt          DateTime?
+  consumedAt          DateTime?
+  createdAt           DateTime                  @default(now())
+
+  // Relations
+  tierSnapshot        LivePriorityTierSnapshot  @relation(fields: [tierSnapshotId], references: [id], onDelete: Restrict)
+  priorityTier        PriorityTier              @relation(fields: [priorityTierId], references: [id], onDelete: Restrict)
+  user                User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentAttempt      PaymentAttempt?           @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+
+  @@map("priority_tier_reservations")
+  @@index([expiresAt, status])
+}
+
+// ============================================================================
+// SECTION 9: Queue System & Submissions
+// ============================================================================
+
+enum QueueStatus {
+  AWAITING_PAYMENT
+  QUEUED
+  NEXT
+  PLAYING
+  PAUSED
+  COMPLETED
+  SKIPPED
+  REJECTED
+  REMOVED
+  CARRIED_OVER
+  REFUND_PENDING
+  REFUNDED
+  EXPIRED
+  MOVED_TO_HISTORY
+}
+
+model Submission {
+  id                    String                    @id @db.Uuid
+  submittingUserId      String                    @db.Uuid
+  sourceTrackId         String                    @db.Uuid
+  artistIdentityId      String?                   @db.Uuid
+  liveSessionId         String                    @db.Uuid
+  isPriority            Boolean                   @default(false)
+  priorityTierSnapshotId String?                  @db.Uuid
+  currentQueueStatus    QueueStatus               @default(QUEUED)
+  submittedAt           DateTime                  @default(now())
+
+  // Relations
+  submittingUser        User                      @relation(fields: [submittingUserId], references: [id], onDelete: Restrict)
+  sourceTrack           Track                     @relation(fields: [sourceTrackId], references: [id], onDelete: Restrict)
+  artistIdentity        ArtistIdentity?           @relation(fields: [artistIdentityId], references: [id], onDelete: SetNull)
+  liveSession           LiveSession               @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  priorityTierSnapshot  LivePriorityTierSnapshot? @relation(fields: [priorityTierSnapshotId], references: [id], onDelete: Restrict)
+  trackSnapshot         SubmissionTrackSnapshot?
+  queueEntry            QueueEntry?
+  submissionNotes       HostSubmissionNote[]
+  payments              Payment[]
+  upgrades              SubmissionUpgrade[]
+
+  @@map("submissions")
+  @@index([submittingUserId])
+  @@index([sourceTrackId])
+  @@index([artistIdentityId])
+  @@index([liveSessionId])
+}
+
+model SubmissionTrackSnapshot {
+  id                    String          @id @db.Uuid
+  submissionId          String          @unique @db.Uuid
+  artistName            String
+  songName              String
+  albumName             String?
+  genre                 String?
+  explicitContent       Boolean
+  releaseDate           DateTime?
+  artworkS3Key          String?
+  sourceType            TrackSourceType
+  playbackCapability    PlaybackCapability
+  mediaVersionId        String?         @db.Uuid
+  externalUrl           String?
+  durationSeconds       Int
+  userProvidedHostNote  String?         @db.Text
+  snapshotCreatedAt     DateTime        @default(now())
+
+  // Relations
+  submission            Submission      @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@map("submission_track_snapshots")
+}
+
+model QueueEntry {
+  id                    String            @id @db.Uuid
+  liveSessionId         String            @db.Uuid
+  submissionId          String            @unique @db.Uuid
+  priorityRank          Int               @default(0) // Copy of rank or evaluated weight
+  manualSortOrder       Int               @default(0) // Sort order within rank group
+  queueSequence         Int               @default(0) // Global chronological sequence ID
+  status                QueueStatus       @default(QUEUED)
+  playingAt             DateTime?
+  completedAt           DateTime?
+  skippedAt             DateTime?
+  rejectedAt            DateTime?
+  removedAt             DateTime?
+  carryoverFromSessionId String?          @db.Uuid
+  hostFacingReason      String?           @db.Text
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  // Historical Tracking Fields
+  movedToHistoryAt      DateTime?
+  movedToHistoryByUserId String?          @db.Uuid
+  historyReason         String?           @db.Text
+  wasPlayed             Boolean           @default(false)
+  playbackCompleted     Boolean           @default(false)
+  historicalSequence    Int?
+  sourceQueuePosition   Int?
+  batchOperationId      String?           @db.Uuid
+  sortOrder             Decimal           @default(0) @db.Decimal(20, 8)
+  // Player Origin State for Restoration
+  loadedIntoPlayerAt    DateTime?
+  originPriorityRank    Int?
+  originSortOrder       Decimal?          @db.Decimal(20, 8)
+
+  // Tier Origin State for Restoration
+  tierOriginPriorityRank Int?
+  tierOriginSortOrder   Decimal?          @db.Decimal(20, 8)
+
+  // Relations
+  liveSession           LiveSession       @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  submission            Submission        @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  queueEvents           QueueEvent[]
+  playbackSessions      PlaybackSession[]
+  playbackEvents        PlaybackEvent[]
+  upgrades              SubmissionUpgrade[]
+  movedToHistoryByUser  User?             @relation("MovedToHistoryByUser", fields: [movedToHistoryByUserId], references: [id], onDelete: SetNull)
+  batchOperation        QueueBatchOperation? @relation(fields: [batchOperationId], references: [id], onDelete: SetNull)
+
+  @@map("queue_entries")
+  @@index([liveSessionId, status])
+  @@index([priorityRank, manualSortOrder, queueSequence])
+  @@index([sortOrder])
+  @@index([wasPlayed, completedAt])
+  @@index([liveSessionId, wasPlayed, completedAt])
+}
+
+model QueueEvent {
+  id               String               @id @db.Uuid
+  queueEntryId     String               @db.Uuid
+  liveSessionId    String               @db.Uuid
+  actingUserId     String?              @db.Uuid // null means system action
+  eventType        String               // e.g. "REORDER", "SKIP", "REJECT", "PLAY"
+  previousState    QueueStatus?
+  newState         QueueStatus
+  previousPosition Int?
+  newPosition      Int?
+  reason           String?              @db.Text
+  createdAt        DateTime             @default(now())
+
+  // Core Audit Correlation & Batch fields
+  batchOperationId String?              @db.Uuid
+  requestId        String?
+  correlationId    String?
+
+  // Real-time ordered sequence
+  eventSequence    Int                  @default(1)
+  publicVisibility Boolean              @default(true)
+
+  // Relations
+  queueEntry       QueueEntry           @relation(fields: [queueEntryId], references: [id], onDelete: Restrict)
+  liveSession      LiveSession          @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  batchOperation   QueueBatchOperation? @relation(fields: [batchOperationId], references: [id], onDelete: SetNull)
+
+  @@map("queue_events")
+  @@index([liveSessionId, createdAt])
+  @@unique([liveSessionId, eventSequence])
+}
+
+model HostSubmissionNote {
+  id              String      @id @db.Uuid
+  submissionId    String      @db.Uuid
+  hostUserId      String      @db.Uuid
+  noteText        String      @db.Text
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  submission      Submission  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@map("host_submission_notes")
+}
+
+model SubmissionUpgrade {
+  id                      String                    @id @db.Uuid
+  submissionId            String                    @db.Uuid
+  queueEntryId            String                    @db.Uuid
+  previousTierSnapshotId  String?                   @db.Uuid
+  newTierSnapshotId       String                    @db.Uuid
+  originalPaymentId       String?                   @db.Uuid
+  upgradePaymentId        String                    @db.Uuid
+  previousQueuePosition   Int?
+  newQueuePosition        Int?
+  previousTotalPaidCents  Int
+  upgradeAmountCents      Int
+  newTotalPaidCents       Int
+  upgradedByUserId        String                    @db.Uuid
+  createdAt               DateTime                  @default(now())
+
+  // Relations
+  submission              Submission                @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  queueEntry              QueueEntry                @relation(fields: [queueEntryId], references: [id], onDelete: Restrict)
+  previousTierSnapshot    LivePriorityTierSnapshot? @relation("PrevTierSnapshot", fields: [previousTierSnapshotId], references: [id], onDelete: Restrict)
+  newTierSnapshot         LivePriorityTierSnapshot  @relation("NewTierSnapshot", fields: [newTierSnapshotId], references: [id], onDelete: Restrict)
+  originalPayment         Payment?                  @relation("OriginalPayment", fields: [originalPaymentId], references: [id], onDelete: Restrict)
+  upgradePayment          Payment                   @relation("UpgradePayment", fields: [upgradePaymentId], references: [id], onDelete: Restrict)
+  upgradedByUser          User                      @relation(fields: [upgradedByUserId], references: [id], onDelete: Restrict)
+
+  @@map("submission_upgrades")
+}
+
+enum QueueBatchOperationType {
+  MOVE_TO_HISTORY
+  REINSERT_TO_QUEUE
+  REMOVE_FROM_ACTIVE_QUEUE
+}
+
+model QueueBatchOperation {
+  id                 String                  @id @db.Uuid
+  liveSessionId      String                  @db.Uuid
+  stationId          String                  @db.Uuid
+  hostUserId         String                  @db.Uuid
+  operationType      QueueBatchOperationType
+  reason             String?                 @db.Text
+  selectedEntryCount Int
+  createdAt          DateTime                @default(now())
+  requestId          String?
+  correlationId      String?
+
+  // Relations
+  liveSession        LiveSession             @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  station            Station                 @relation(fields: [stationId], references: [id], onDelete: Restrict)
+  hostUser           User                    @relation("BatchOpsByHost", fields: [hostUserId], references: [id], onDelete: Restrict)
+  queueEntries       QueueEntry[]
+  queueEvents        QueueEvent[]
+
+  @@map("queue_batch_operations")
+  @@index([liveSessionId])
+  @@index([correlationId])
+}
+
+// ============================================================================
+// SECTION 10: Playback History
+// ============================================================================
+
+model PlaybackSession {
+  id                    String          @id @db.Uuid
+  hostUserId            String          @db.Uuid
+  liveSessionId         String          @db.Uuid
+  queueEntryId          String          @db.Uuid
+  startedAt             DateTime        @default(now())
+  pausedAt              DateTime?
+  resumedAt             DateTime?
+  completedAt           DateTime?
+  playbackDurationSec   Int             @default(0)
+  completionPercentage  Int             @default(0) // Calculated from total duration
+  outputPlayerMetadata  String?         @db.Text // JSON payload e.g. volume, device
+
+  // Relations
+  liveSession           LiveSession     @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  queueEntry            QueueEntry      @relation(fields: [queueEntryId], references: [id], onDelete: Restrict)
+
+  @@map("playback_sessions")
+}
+
+model PlaybackEvent {
+  id              String      @id @db.Uuid
+  liveSessionId   String      @db.Uuid
+  queueEntryId    String      @db.Uuid
+  eventType       String      // "PLAY", "PAUSE", "SEEK", "STOP", "COMPLETE"
+  seekTimeSec     Int?
+  volumeLevel     Float?
+  timestamp       DateTime    @default(now())
+
+  // Relations
+  liveSession     LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Restrict)
+  queueEntry      QueueEntry  @relation(fields: [queueEntryId], references: [id], onDelete: Restrict)
+
+  @@index([liveSessionId, eventType, timestamp])
+  @@index([queueEntryId])
+  @@index([timestamp])
+  @@map("playback_events")
+}
+
+// ============================================================================
+// SECTION 11: Payments
+// ============================================================================
+
+enum PaymentStatus {
+  CREATED
+  REQUIRES_ACTION
+  AUTHORIZED
+  CAPTURED
+  SETTLED
+  FAILED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  DISPUTED
+  CHARGEBACK
+}
+
+model Payment {
+  id                      String          @id @db.Uuid
+  provider                PayoutProvider  @default(STRIPE)
+  providerPaymentId       String          @unique // e.g. Stripe Payment Intent ID (pi_...)
+  payingUserId            String          @db.Uuid
+  hostUserId              String          @db.Uuid
+  submissionId            String?         @db.Uuid
+  grossAmountCents        Int             // Stored in USD integer cents
+  currency                String          @default("USD") // Constrained to USD
+  hostAllocationCents     Int             // 85% of grossAmountCents
+  platformAllocationCents Int             // 15% of grossAmountCents
+  processorFeeCents       Int?            // Stripe transaction fee (e.g. 30c + 2.9%)
+  taxAmountCents          Int?
+  refundedAmountCents     Int             @default(0)
+  disputedAmountCents     Int             @default(0)
+  status                  PaymentStatus   @default(CREATED)
+  captureStatus           String          @default("NOT_CAPTURED") // e.g. authorized, captured
+  createdAt               DateTime        @default(now())
+  authorizedAt            DateTime?
+  capturedAt              DateTime?
+  settledAt               DateTime?
+  failedAt                DateTime?
+  refundedAt              DateTime?
+  disputedAt              DateTime?
+  updatedAt               DateTime        @updatedAt
+
+  // Relations
+  payingUser              User            @relation(fields: [payingUserId], references: [id], onDelete: Restrict)
+  submission              Submission?     @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  paymentAttempts         PaymentAttempt[]
+  allocations             PaymentAllocation[]
+  refunds                 Refund[]
+  disputes                Dispute[]
+  chargebacks             Chargeback[]
+  ledgerTransactions      LedgerTransaction[]
+  hostEarnings            HostEarning[]
+  originalUpgrades        SubmissionUpgrade[] @relation("OriginalPayment")
+  upgradeUpgrades         SubmissionUpgrade[] @relation("UpgradePayment")
+
+  @@map("payments")
+  @@index([payingUserId])
+  @@index([hostUserId])
+  @@index([status])
+}
+
+model PaymentAttempt {
+  id                  String          @id @db.Uuid
+  paymentId           String          @db.Uuid
+  providerAttemptId   String?         @unique // Stripe Charge ID (ch_...) or transaction reference
+  status              String          // e.g. succeeded, processing, failed, requires_action
+  amountCents         Int
+  failureCode         String?
+  failureMessage      String?         @db.Text
+  metaPayload         String?         @db.Text // JSON string
+  createdAt           DateTime        @default(now())
+
+  // Relations
+  payment             Payment         @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  reservations        PriorityTierReservation[]
+
+  @@map("payment_attempts")
+}
+
+model PaymentProviderEvent {
+  id                String          @id @db.Uuid
+  provider          PayoutProvider  @default(STRIPE)
+  providerEventId   String          @unique // Stripe Webhook Event ID (evt_...)
+  eventType         String          // e.g. payment_intent.succeeded
+  receivedAt        DateTime        @default(now())
+  processingState   String          @default("PENDING") // PENDING, COMPLETED, FAILED
+  processingAttempts Int            @default(0)
+  payloadHash       String
+  payloadText       String          @db.Text // Safely retained raw Stripe webhook JSON body
+  processedAt       DateTime?
+  errorState        String?         @db.Text
+
+  @@map("payment_provider_events")
+}
+
+model PaymentAllocation {
+  id                        String      @id @db.Uuid
+  paymentId                 String      @db.Uuid
+  grossAmountCents          Int
+  hostPercentage            Decimal     @db.Decimal(5, 2) // e.g. 85.00
+  platformPercentage        Decimal     @db.Decimal(5, 2) // e.g. 15.00
+  hostAmountCents           Int
+  platformGrossAmountCents  Int
+  currency                  String      @default("USD")
+  stripeFeeAmountCents      Int?
+  platformNetAmountCents    Int?
+  stripeConnectedAccountDest String      // The destination Stripe connected account id
+  stripeApplicationFeeId    String?     // Stripe application fee id reference (fee_...)
+  allocatedAt               DateTime    @default(now())
+
+  // Relations
+  payment                   Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@map("payment_allocations")
+}
+
+model Refund {
+  id                        String              @id @db.Uuid
+  paymentId                 String              @db.Uuid
+  providerRefundId          String              @unique // Stripe Refund ID (re_...)
+  amountCents               Int
+  currency                String              @default("USD")
+  hostReversalAmountCents   Int                 // 85% of refund
+  platformReversalAmountCents Int               // 15% of refund
+  reason                    String?             @db.Text
+  adminNotes                String?             @db.Text
+  status                    String              @default("SUCCEEDED") // succeeded, failed, pending
+  createdAt               DateTime            @default(now())
+  processedAt               DateTime?
+
+  // Relations
+  payment                   Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  ledgerTransactions        LedgerTransaction[]
+
+  @@map("refunds")
+}
+
+model Dispute {
+  id                      String              @id @db.Uuid
+  paymentId               String              @db.Uuid
+  providerDisputeId       String              @unique // Stripe Dispute ID (dp_...)
+  reasonCode              String              // e.g. fraudulent, unrecognized
+  amountCents             Int
+  currency                String              @default("USD")
+  evidenceDetails         String?             @db.Text
+  evidenceSubmittedAt     DateTime?
+  status                  String              // e.g. warning_needs_response, won, lost
+  createdAt               DateTime            @default(now())
+  resolvedAt              DateTime?
+
+  // Relations
+  payment                   Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  ledgerTransactions        LedgerTransaction[]
+
+  @@map("disputes")
+}
+
+model Chargeback {
+  id              String      @id @db.Uuid
+  paymentId       String      @db.Uuid
+  chargebackValue Int
+  currency        String      @default("USD")
+  createdAt       DateTime    @default(now())
+
+  // Relations
+  payment         Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@map("chargebacks")
+}
+
+// ============================================================================
+// SECTION 12: Financial Ledger (Double-Entry System)
+// ============================================================================
+
+model LedgerAccount {
+  id              String          @id @db.Uuid
+  code            String          @unique // e.g. "PAYMENT_CLEARING", "HOST_PAYABLE", etc.
+  name            String
+  category        String          // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  currency        String          @default("USD")
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  entries         LedgerEntry[]
+
+  @@map("ledger_accounts")
+}
+
+model LedgerTransaction {
+  id              String          @id @db.Uuid
+  idempotencyKey  String          @unique // Enforce strictly unique postings
+  description     String
+  systemSource    String          // e.g. "PAYMENT_CAPTURE", "REFUND_REVERSAL", "PAYOUT_INITIATED"
+  paymentId       String?         @db.Uuid
+  refundId        String?         @db.Uuid
+  disputeId       String?         @db.Uuid
+  payoutId        String?         @db.Uuid
+  isPosted        Boolean         @default(false)
+  effectiveAt     DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+
+  // Relations
+  payment         Payment?        @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  refund          Refund?         @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  dispute         Dispute?        @relation(fields: [disputeId], references: [id], onDelete: Restrict)
+  payout          Payout?         @relation(fields: [payoutId], references: [id], onDelete: Restrict)
+  entries         LedgerEntry[]
+
+  @@map("ledger_transactions")
+  @@index([effectiveAt])
+}
+
+model LedgerEntry {
+  id                String            @id @db.Uuid
+  transactionId     String            @db.Uuid
+  accountId         String            @db.Uuid
+  amountCents       Int               // Positive = Debit, Negative = Credit
+  currency          String            @default("USD")
+  createdAt         DateTime          @default(now())
+
+  // Relations
+  transaction       LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account           LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@map("ledger_entries")
+  @@index([accountId, createdAt])
+}
+
+// ============================================================================
+// SECTION 13: Host Earnings & Payouts
+// ============================================================================
+
+enum HostEarningStatus {
+  PAYMENT_PENDING
+  ALLOCATED_TO_STRIPE
+  REVERSED
+  REFUNDED
+  DISPUTED
+}
+
+enum PayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model HostEarning {
+  id                  String            @id @db.Uuid
+  hostId              String            @db.Uuid
+  paymentId           String            @db.Uuid
+  submissionId        String?           @db.Uuid
+  liveSessionId       String?           @db.Uuid
+  grossAmountCents    Int
+  hostShareCents      Int               // grossAmountCents * 0.85
+  currency            String            @default("USD")
+  status              HostEarningStatus @default(ALLOCATED_TO_STRIPE)
+  allocatedAt         DateTime          @default(now())
+  availableAt         DateTime?
+  paidAt              DateTime?
+  reversedAt          DateTime?
+
+  // Relations
+  host                HostProfile       @relation(fields: [hostId], references: [id], onDelete: Restrict)
+  payment             Payment           @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  liveSession         LiveSession?      @relation(fields: [liveSessionId], references: [id], onDelete: SetNull)
+
+  @@map("host_earnings")
+  @@index([hostId, status])
+}
+
+// NOTE: Payout and PayoutHold represent READ-ONLY informational status records.
+// Stripe manages all host bank settlement timings, eligibility, schedules, and transfers.
+// TheQueue does not run an internal host wallet, promise timelines, or initiate bank payouts.
+model Payout {
+  id                      String              @id @db.Uuid
+  hostId                  String              @db.Uuid
+  payoutAccountId         String              @db.Uuid
+  provider                PayoutProvider      @default(STRIPE)
+  providerPayoutId        String              @unique // Stripe Payout ID (po_...) or Transfer ID (tr_...)
+  grossPayoutCents        Int                 // Amount paid out to host's external bank account
+  currency                String              @default("USD")
+  payoutStatus            PayoutStatus        @default(PENDING)
+  isInstant               Boolean             @default(false)
+  arrivalEstimate         DateTime?
+  eligibilityStatus       String?
+  failureCode             String?
+  failureReason           String?             @db.Text
+  requestedAt             DateTime            @default(now())
+  processingAt            DateTime?
+  paidAt                  DateTime?
+  failedAt                DateTime?
+  cancelledAt             DateTime?
+
+  // Relations
+  host                    HostProfile         @relation(fields: [hostId], references: [id], onDelete: Restrict)
+  payoutAccount           HostPayoutAccount   @relation(fields: [payoutAccountId], references: [id], onDelete: Restrict)
+  ledgerTransactions      LedgerTransaction[]
+
+  @@map("payouts")
+  @@index([hostId])
+}
+
+model PayoutHold {
+  id              String      @id @db.Uuid
+  hostId          String      @db.Uuid
+  reason          String      @db.Text
+  createdByUserId String      @db.Uuid
+  startAt         DateTime    @default(now())
+  endAt           DateTime?
+  isPermanent     Boolean     @default(false)
+  releasedByUserId String?    @db.Uuid
+  releaseReason   String?     @db.Text
+  releasedAt      DateTime?
+
+  // Relations
+  host            HostProfile @relation(fields: [hostId], references: [id], onDelete: Cascade)
+
+  @@map("payout_holds")
+}
+
+// ============================================================================
+// SECTION 14: Overlays
+// ============================================================================
+
+model OverlaySet {
+  id                    String              @id @db.Uuid
+  hostId                String              @db.Uuid
+  name                  String
+  canvasWidth           Int                 @default(1920)
+  canvasHeight          Int                 @default(1080)
+  aspectRatio           String              @default("16:9") // "16:9", "1:1", "9:16", "CUSTOM"
+  themeId               String?             @db.Uuid
+  configurationJson     String              @db.Text // Full layout widgets layout properties
+  visibleFields         String              @db.Text // JSON list of fields (e.g. artist, title, artwork)
+  queuePrivacySettings  String              @db.Text // JSON privacy flags
+  artworkBehavior       String              @default("ZOOM_FIT")
+  placeholderBehavior   String              @default("DEFAULT_LOGO")
+  offlineStateBehavior  String              @default("SHOW_PLACEHOLDER")
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  deletedAt             DateTime?
+
+  // Relations
+  host                  HostProfile         @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  theme                 OverlayTheme?       @relation(fields: [themeId], references: [id], onDelete: SetNull)
+  scenes                OverlayScene[]
+  accessKeys            OverlayAccessKey[]
+
+  @@map("overlay_sets")
+}
+
+model OverlayScene {
+  id              String      @id @db.Uuid
+  setId           String      @db.Uuid
+  name            String
+  slug            String      // e.g. "now-playing-banner", "full-queue-view"
+  layoutConfig    String      @db.Text // JSON string
+  isActive        Boolean     @default(true)
+
+  // Relations
+  overlaySet      OverlaySet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+
+  @@unique([setId, slug])
+  @@map("overlay_scenes")
+}
+
+model OverlayAccessKey {
+  id                    String      @id @db.Uuid
+  setId                 String      @db.Uuid
+  accessKeyHash         String      @unique // SHA-256 hash of random high-entropy token
+  expiresAt             DateTime?
+  lastUsedAt            DateTime?
+  isActive              Boolean     @default(true)
+  liveSessionRestriction String?     @db.Text // JSON session list constraint
+  sceneSlugRestriction  String?
+
+  // Relations
+  overlaySet            OverlaySet  @relation(fields: [setId], references: [id], onDelete: Cascade)
+
+  @@map("overlay_access_keys")
+}
+
+model OverlayTheme {
+  id              String        @id @db.Uuid
+  name            String        @unique
+  cssVariables    String        @db.Text // JSON string e.g. { "--primary": "#8b5cf6" }
+  isPublic        Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+
+  // Relations
+  overlaySets     OverlaySet[]
+
+  @@map("overlay_themes")
+}
+
+// ============================================================================
+// SECTION 15: Moderation, Reports, & Bans
+// ============================================================================
+
+enum ReportStatus {
+  OPEN
+  UNDER_REVIEW
+  ACTIONED
+  DISMISSED
+  APPEALED
+  CLOSED
+}
+
+model Report {
+  id              String        @id @db.Uuid
+  reporterUserId  String        @db.Uuid
+  targetType      String        // e.g. "USER", "TRACK", "SUBMISSION", "STATION"
+  targetEntityId  String        @db.Uuid
+  reasonCode      String        // e.g. "COPYRIGHT", "HARASSMENT", "EXPLICIT_CONTENT"
+  description     String        @db.Text
+  status          ReportStatus  @default(OPEN)
+  moderatorUserId String?       @db.Uuid
+  moderatorNotes  String?       @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  reporter        User          @relation("FiledReports", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  moderator       User?         @relation("ModeratedReports", fields: [moderatorUserId], references: [id], onDelete: SetNull)
+  cases           ModerationCase[]
+
+  @@map("reports")
+  @@index([status, targetType])
+}
+
+model ModerationCase {
+  id              String              @id @db.Uuid
+  reportId        String?             @db.Uuid
+  targetUserId    String              @db.Uuid
+  status          ReportStatus        @default(OPEN)
+  internalNotes   String?             @db.Text
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  // Relations
+  report          Report?             @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  targetUser      User                @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  actions         ModerationAction[]
+
+  @@map("moderation_cases")
+}
+
+model ModerationAction {
+  id              String          @id @db.Uuid
+  caseId          String          @db.Uuid
+  moderatorUserId String          @db.Uuid
+  actionType      String          // e.g. "WARNING", "TEMPORARY_BAN", "PERMANENT_BAN"
+  reasonCode      String
+  internalNotes   String?         @db.Text
+  userVisibleNotes String?        @db.Text
+  notifiedUser    Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+
+  // Relations
+  moderationCase  ModerationCase  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  moderator       User            @relation(fields: [moderatorUserId], references: [id], onDelete: Restrict)
+
+  @@map("moderation_actions")
+}
+
+model UserBlock {
+  id              String      @id @db.Uuid
+  blockingUserId  String      @db.Uuid
+  blockedUserId   String      @db.Uuid
+  reason          String?     @db.Text
+  blockedAt       DateTime    @default(now())
+
+  // Relations
+  blockingUser    User        @relation("BlockingUser", fields: [blockingUserId], references: [id], onDelete: Cascade)
+  blockedUser     User        @relation("BlockedUser", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([blockingUserId, blockedUserId])
+  @@map("user_blocks")
+}
+
+enum BanScope {
+  ACCOUNT
+  HOST_PRIVILEGES
+  SUBMISSIONS
+  PAYMENTS
+  PAYOUTS
+  CONTENT_UPLOAD
+  IP
+  NETWORK
+  DEVICE_RISK
+  FULL_PLATFORM
+}
+
+model Ban {
+  id                    String        @id @db.Uuid
+  targetUserId          String?       @db.Uuid // Null if banned solely by identifier (IP, Email hash)
+  scope                 BanScope      @default(FULL_PLATFORM)
+  reasonCode            String        // e.g., "CHARGEBACK_FRAUD", "COMMUNITY_VIOLATION"
+  internalReason        String        @db.Text
+  userVisibleReason     String        @db.Text
+  startAt               DateTime      @default(now())
+  expiresAt             DateTime?     // Null if permanent
+  isPermanent           Boolean       @default(false)
+  isActive              Boolean       @default(true)
+  creatingAdminUserId   String        @db.Uuid
+  revokingAdminUserId   String?       @db.Uuid
+  unbannedAt            DateTime?
+  unbanReason           String?       @db.Text
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  // Relations
+  targetUser            User?         @relation("BannedUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+  creatingAdmin         User          @relation("CreatedBans", fields: [creatingAdminUserId], references: [id], onDelete: Restrict)
+  revokingAdmin         User?         @relation("RevokedBans", fields: [revokingAdminUserId], references: [id], onDelete: Restrict)
+  identifiers           BanIdentifier[]
+
+  @@map("bans")
+  @@index([targetUserId, isActive])
+}
+
+model BanIdentifier {
+  id              String    @id @db.Uuid
+  banId           String    @db.Uuid
+  type            String    @map("identifierType") // Map schema mapping
+  hashedValue     String    @unique // SHA-256 hash of identifier to protect privacy
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  ban             Ban       @relation(fields: [banId], references: [id], onDelete: Cascade)
+
+  @@map("ban_identifiers")
+  @@index([hashedValue])
+}
+
+// ============================================================================
+// SECTION 16: Administration & Auditing
+// ============================================================================
+
+model AdminAuditLog {
+  id                    String    @id @db.Uuid
+  actingAdminUserId     String    @db.Uuid
+  actionType            String    // e.g. "HOST_APPROVED", "USER_BANNED", "COMMISSION_CHANGED"
+  targetEntityType      String    // e.g. "HostApplication", "User", "PlatformConfiguration"
+  targetEntityId        String    @db.Uuid
+  beforeState           String?   @db.Text // JSON serialization before action
+  afterState            String?   @db.Text // JSON serialization after action
+  reason                String    @db.Text
+  requestId             String?
+  sessionId             String?   @db.Uuid
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime  @default(now())
+
+  // Relations
+  actingAdmin           User      @relation(fields: [actingAdminUserId], references: [id], onDelete: Restrict)
+
+  @@map("admin_audit_logs")
+  @@index([actingAdminUserId, createdAt])
+  @@index([targetEntityType, targetEntityId, createdAt])
+}
+
+// ============================================================================
+// SECTION 17: Platform Configuration & Stripe Platform setup
+// ============================================================================
+
+model PlatformConfiguration {
+  id                    String    @id @db.Uuid
+  isActive              Boolean   @default(true)
+  minimumPriorityPrice  Int       @default(200) // Configured in USD cents, e.g. 200 = $2.00
+  maximumPriorityPrice  Int       @default(50000) // Configured in USD cents, e.g. 50000 = $500.00
+  supportedCurrencies   String    @default("[\"USD\"]") // JSON array list
+  enabledPayoutProviders String   @default("[\"STRIPE\"]") // JSON list of payout providers
+  globalPayoutDelayDays Int       @default(7)
+  globalRefundWindowDays Int      @default(3)
+  globalUploadLimitMb   Int       @default(50)
+  maxTrackDurationSeconds Int     @default(600)
+  featureFlags          String    @db.Text // JSON payload e.g. { "hostApplicationsEnabled": true }
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  versions              PlatformConfigurationVersion[]
+
+  @@map("platform_configurations")
+}
+
+model PlatformConfigurationVersion {
+  id              String                @id @db.Uuid
+  configId        String                @db.Uuid
+  versionNumber   Int
+  changeSummary   String                @db.Text
+  createdAt       DateTime              @default(now())
+
+  // Relations
+  config          PlatformConfiguration @relation(fields: [configId], references: [id], onDelete: Restrict)
+
+  @@unique([configId, versionNumber])
+  @@map("platform_configuration_versions")
+}
+
+model PlatformFeeRule {
+  id                      String    @id @db.Uuid
+  ruleName                String
+  hostPercentage          Decimal   @db.Decimal(5, 2) @default(85.00) // gross percentage allocated to host
+  platformPercentage      Decimal   @db.Decimal(5, 2) @default(15.00) // gross percentage allocated to platform
+  isActive                Boolean   @default(true)
+  effectiveFrom           DateTime  @default(now())
+  effectiveTo             DateTime?
+  createdAt               DateTime  @default(now())
+
+  @@map("platform_fee_rules")
+}
+
+enum StripePlatformMode {
+  TEST
+  LIVE
+}
+
+model StripePlatformConfiguration {
+  id                          String              @id @db.Uuid
+  stripePlatformAccountId     String              @unique // TheQueue platform account ID
+  stripePlatformDisplayName   String
+  stripePlatformCountry       String
+  stripePlatformDefaultCurrency String            @default("USD")
+  stripePlatformConnected     Boolean             @default(false)
+  stripePlatformVerifiedAt    DateTime?
+  stripePlatformLastHealthCheckAt DateTime?
+  stripePlatformMode          StripePlatformMode  @default(TEST)
+  stripePlatformConfigurationVersion Int          @default(1)
+  isPaymentsEnabled           Boolean             @default(true)
+  createdAt                   DateTime            @default(now())
+  updatedAt                   DateTime            @updatedAt
+
+  // Relations
+  healthChecks                StripePlatformHealthCheck[]
+  webhooks                    StripeWebhookEndpointReference[]
+
+  @@map("stripe_platform_configurations")
+}
+
+model StripePlatformHealthCheck {
+  id                          String                      @id @db.Uuid
+  stripePlatformConfigId      String                      @db.Uuid
+  isApiConnected              Boolean
+  isConnectCapabilityEnabled  Boolean
+  isDestinationChargesReady   Boolean
+  isWebhookHealthy            Boolean
+  lastSuccessfulHealthCheckAt DateTime?
+  configurationErrors         String?                     @db.Text
+  checkedAt                   DateTime                    @default(now())
+
+  // Relations
+  stripePlatformConfig        StripePlatformConfiguration @relation(fields: [stripePlatformConfigId], references: [id], onDelete: Cascade)
+
+  @@map("stripe_platform_health_checks")
+}
+
+model StripeWebhookEndpointReference {
+  id                          String                      @id @db.Uuid
+  stripePlatformConfigId      String                      @db.Uuid
+  stripeWebhookEndpointId     String                      @unique // Stripe Webhook ID (we_...)
+  environment                 String                      // development, production, test
+  endpointUrl                 String
+  isEnabled                   Boolean                     @default(true)
+  lastEventReceivedAt         DateTime?
+  lastSuccessfulProcessedAt   DateTime?
+  createdAt                   DateTime                    @default(now())
+
+  // Relations
+  stripePlatformConfig        StripePlatformConfiguration @relation(fields: [stripePlatformConfigId], references: [id], onDelete: Cascade)
+
+  @@map("stripe_webhook_endpoint_references")
+}
+
+enum PaymentEmergencyState {
+  PAYMENTS_ENABLED
+  PAYMENTS_PAUSED
+  PAYMENTS_DISABLED
+}
+
+model PaymentEmergencyControl {
+  id              String                @id @db.Uuid
+  state           PaymentEmergencyState @default(PAYMENTS_ENABLED)
+  reason          String                @db.Text
+  changedByUserId String                @db.Uuid
+  previousState   PaymentEmergencyState
+  reEnabledAt     DateTime?
+  changedAt       DateTime              @default(now())
+
+  @@map("payment_emergency_controls")
+}
+
+// ============================================================================
+// SECTION 18: Global Site Customization & Branding Tokens
+// ============================================================================
+
+model SiteCustomization {
+  id                    String    @id @db.Uuid
+  siteName              String    @default("TheQueue")
+  primaryLogoUrl        String?   @db.Text
+  alternateLogoUrl      String?   @db.Text
+  faviconUrl            String?   @db.Text
+  primaryColor          String    @default("#8B5CF6")
+  primaryHoverColor     String    @default("#7C3AED")
+  secondaryColor        String    @default("#27272A")
+  accentColor           String    @default("#A78BFA")
+  backgroundColor       String    @default("#09090B")
+  surfaceColor          String    @default("#18181B")
+  textColor             String    @default("#FAFAFA")
+  mutedTextColor        String    @default("#A1A1AA")
+  borderColor           String    @default("#27272A")
+  liveColor             String    @default("#EF4444")
+  successColor          String    @default("#22C55E")
+  warningColor          String    @default("#F59E0B")
+  dangerColor           String    @default("#EF4444")
+  customCss             String?   @db.Text
+  updatedByUserId       String?   @db.Uuid
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("site_customizations")
+}

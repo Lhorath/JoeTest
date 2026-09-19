@@ -1,0 +1,37 @@
+{
+  "name": "@platform/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "prisma generate --schema=./prisma/schema.prisma && tsc -b",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "db:generate": "prisma generate --schema=./prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema=./prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.21.1",
+    "uuidv7": "^1.0.2",
+    "@platform/types": "*"
+  },
+  "devDependencies": {
+    "@platform/config": "*",
+    "typescript": "^5.6.3",
+    "prisma": "^5.21.1",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.19.1",
+    "argon2": "^0.40.1"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

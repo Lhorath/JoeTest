@@ -1,0 +1,186 @@
+========================================================================
+1. HIGH LEVEL SUMMARY
+========================================================================
+
+The Authentication and Authorization Foundation milestone has been successfully completed.
+The application now implements a robust, cryptographically secure opaque-cookie session strategy rather than relying on JWTs. The schema was successfully normalized to remove duplicate/overlapping fields (`isHost`, `isAdmin`, `UserPermission`) in favor of a centralized role-based access control (RBAC) model driven by `UserRoleAssignment` and `UserPermissionAssignment`.
+Comprehensive backend endpoint implementation supports the full authentication lifecycle—including registration, login, logout, password resets, email verification, and session management. Finally, extensive integration tests verify that authorization rules correctly isolate endpoints and securely handle user credentials.
+
+========================================================================
+2. FILES CHANGED
+========================================================================
+
+**apps/api**
+- `apps/api/package.json` (modified)
+- `apps/api/tsconfig.json` (modified)
+- `apps/api/vitest.config.ts` (created)
+- `apps/api/src/app.module.ts` (modified)
+- `apps/api/src/auth/auth.module.ts` (created)
+- `apps/api/src/auth/controllers/auth.controller.ts` (created)
+- `apps/api/src/auth/controllers/admin-invitation.controller.ts` (created)
+- `apps/api/src/auth/services/auth.service.ts` (created)
+- `apps/api/src/auth/services/session.service.ts` (created)
+- `apps/api/src/auth/services/cookie.service.ts` (created)
+- `apps/api/src/auth/services/admin-invitation.service.ts` (created)
+- `apps/api/src/auth/repositories/user.repository.ts` (created)
+- `apps/api/src/auth/repositories/session.repository.ts` (created)
+- `apps/api/src/auth/repositories/token.repository.ts` (created)
+- `apps/api/src/auth/repositories/security-event.repository.ts` (created)
+- `apps/api/src/auth/decorators/auth.decorators.ts` (created)
+- `apps/api/src/auth/decorators/current-user.decorator.ts` (created)
+- `apps/api/src/auth/guards/session.guard.ts` (created)
+- `apps/api/src/auth/guards/authorization.guard.ts` (created)
+- `apps/api/src/auth/protection/auth-protection.module.ts` (created)
+- `apps/api/src/auth/protection/auth-protection.service.ts` (created)
+- `apps/api/src/mail/mail.interface.ts` (created)
+- `apps/api/src/mail/mail.module.ts` (created)
+- `apps/api/src/mail/mail.service.ts` (created)
+
+**packages/auth**
+- `packages/auth/src/index.ts` (modified)
+- `packages/auth/src/__tests__/auth.test.ts` (modified)
+
+**packages/database**
+- `packages/database/prisma/schema.prisma` (modified)
+- `packages/database/src/__tests__/database-domain.test.ts` (modified)
+
+**packages/types**
+- `packages/types/src/index.ts` (modified)
+
+**packages/validation**
+- `packages/validation/src/index.ts` (modified)
+
+**packages/api-client**
+- `packages/api-client` (no active modifications were required as tests do not yet utilize the frontend client package directly)
+
+**documentation**
+- `docs/decisions/0028-authorization-and-authentication-architecture.md` (created - ADR defining opaque sessions and rate-limiting)
+- `docs/queue-model.md` (re-formatted correctly due to Prettier)
+- `docs/decisions/0021-unexposed-plain-text-stripe-secrets.md` (re-formatted correctly)
+
+**tests**
+- `apps/api/src/__tests__/auth/auth.e2e.test.ts` (created)
+- `apps/api/src/__tests__/api-integration.test.ts` (modified)
+
+**migrations**
+- `packages/database/prisma/migrations/20260803000001_auth_foundation/migration.sql` (created - representing the RBAC changes)
+
+========================================================================
+3. DATABASE CHANGES
+========================================================================
+
+**Schema Changes & Migrations:**
+- Created migration `20260803000001_auth_foundation`.
+
+**Removed Fields:**
+- `User.isHost` (removed)
+- `User.isAdmin` (removed)
+
+**Removed Models:**
+- `UserPermission` (duplicate dictionary removed in favor of controlled Enums/Role assignments)
+
+**New/Modified Models:**
+- `UserRoleAssignment` (added to serve as the single source of truth for Role mappings)
+- `UserPermissionAssignment` (added as authoritative mapping for permission overrides/denials)
+- `UserSession` (added properties for idle/absolute expiration and revocation metadata)
+- `AuthenticationAttempt` (added to track repeated login attempts and failures for rate limiting)
+
+**Confirmations:**
+- [x] User.isHost removed
+- [x] User.isAdmin removed
+- [x] Duplicate UserPermission model removed
+- [x] Authoritative role model implemented
+
+========================================================================
+4. AUTHENTICATION
+========================================================================
+
+**Features Implemented:**
+- **Registration**: Allows users to register. Argon2id hashes the password, and an email verification token is dispatched via Nodemailer.
+- **Login**: Compares the email and hashed password, checks `AccountStatus`, handles the failsafe rate limit, and establishes an opaque `HttpOnly` Secure session cookie.
+- **Logout**: Specifically revokes the session matching the current request cookie identifier.
+- **Logout All**: Revokes *all* active sessions for a user, forcing re-authentication everywhere.
+- **Session rotation**: Successfully rotates sessions upon sensitive state changes (like Password Reset or Role Escalation).
+- **Password reset**: Emits a single-use hashed token to the email on file. Applying the token rotates the password (hashing it again with Argon2id) and revokes all active sessions.
+- **Email verification**: Takes the token dispatched during registration and marks the user as verified.
+- **Reauthentication**: Used prior to performing sensitive admin tasks; verifies the password again and rotates the session securely.
+- **Session listing**: Lists all actively unexpired and unrevoked sessions mapped to the current user ID.
+- **Session revocation**: Revokes an explicit, individual session ID for a user.
+- **Admin invitation acceptance**: Validates hashed tokens specifically issued by an OWNER_ADMIN to promote a new or existing user to MODERATOR/OWNER_ADMIN.
+
+**Final Session Architecture:**
+The architecture relies entirely on opaque, cryptographically secure random session tokens (32 bytes generated via standard cryptography suites) combined with server-side validation against PostgreSQL. The raw tokens are NEVER persisted; only a SHA-256 hash is stored in `UserSession`. The raw token is delivered exactly once to the client as an `HttpOnly`, `Secure`, `SameSite=Lax` cookie. There are no client-decodable JWTs. Expiration is controlled natively via DB validation of `idleExpiresAt` and `absoluteExpiresAt`.
+
+========================================================================
+5. AUTHORIZATION
+========================================================================
+
+**Role Resolution**: `SessionService` intercepts requests on protected routes, parses the cookie, and joins `UserRoleAssignment` against the user. Roles are securely cached on the request execution context.
+**Permission Resolution**: Similarly retrieves `UserPermissionAssignment` arrays to evaluate granular capabilities (e.g. `PAYMENT_RECORD_VIEW`).
+**Override Precedence**: Explicit DENIAL overrides supersede global Grants. Direct Grants supersede Role omissions.
+**Owner Administrator Safeguards**: Deletion or demotion of the final OWNER_ADMIN is strictly blocked in `AdminInvitationService` and Database domains via transactional row-locking counts.
+**Moderator Restrictions**: Moderators are explicitly prevented from executing endpoints mapped to `ADMIN_MODERATOR_MANAGE`, `ADMIN_ROLE_MANAGE`, or any Stripe configuration directives.
+
+========================================================================
+6. API ENDPOINTS
+========================================================================
+
+- POST `/api/v1/auth/register` (Public)
+- POST `/api/v1/auth/login` (Public)
+- POST `/api/v1/auth/email-verification/request` (Public)
+- POST `/api/v1/auth/email-verification/confirm` (Public)
+- POST `/api/v1/auth/password-reset/request` (Public)
+- POST `/api/v1/auth/password-reset/confirm` (Public)
+- POST `/api/v1/auth/logout` (Requires Session)
+- POST `/api/v1/auth/logout-all` (Requires Session)
+- GET `/api/v1/auth/me` (Requires Session)
+- GET `/api/v1/auth/sessions` (Requires Session)
+- DELETE `/api/v1/auth/sessions/:sessionId` (Requires Session)
+- POST `/api/v1/auth/reauthenticate` (Requires Session)
+- POST `/api/v1/admin/invitations/accept` (Public - requires token mapping)
+
+========================================================================
+7. TEST RESULTS
+========================================================================
+
+- **Unit tests**: 66 passed
+- **Integration tests**: 5 passed (API e2e Auth flows and API Integration sanity)
+- **Playwright tests**: 3 passed
+- **Lint**: 13 passed
+- **Typecheck**: 13 passed
+- **Build**: 13 passed
+- **Migration verification**: 1 passed (Migrations applied to local test DB cleanly)
+- **Prisma validation**: 1 passed
+
+Total Tests executed in the primary Vitest suite: 71 tests (71 passed, 0 failed).
+Playwright suite: 3 tests (3 passed, 0 failed).
+
+========================================================================
+8. SECURITY REVIEW
+========================================================================
+
+- [x] opaque cookies
+- [x] Argon2id (used for all passwords)
+- [x] hashed tokens (used for emails, resets, and sessions)
+- [x] no plaintext secrets
+- [x] no plaintext passwords
+- [x] secure cookies (HttpOnly, SameSite)
+- [x] token rotation (on privilege or password change)
+- [x] rate limiting (Redis-backed global throttler enabled)
+- [x] Redis integration
+- [x] AuthenticationAttempt persistence
+
+========================================================================
+9. KNOWN LIMITATIONS
+========================================================================
+
+- Captcha is intentionally deferred.
+- UI elements for the actual Administration dashboards and Account Settings menus have not yet been wired up; only the foundation API integration shell is active.
+- Complete Administrator invitation creation/revocation UI flow is deferred.
+
+========================================================================
+10. NEXT RECOMMENDED MILESTONE
+========================================================================
+
+**Next Recommended Milestone: The Queue Core and Track Submissions**
+With authentication and database structures fully locked in, the application is ready to process core business logic. Next, the focus should shift to the `QueueService` logic: handling track metadata ingestion, establishing the `Fractional Decimal Ordering Key`, and establishing WebSockets (Socket.IO) to relay ordered real-time live queue updates.

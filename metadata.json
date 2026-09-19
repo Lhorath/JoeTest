@@ -1,0 +1,6 @@
+{
+  "name": "Hookline Reviews",
+  "description": "Music submission and review platform for live stream hosts, artists, and administrators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,40 @@
+=== GIT STATUS ===
+On branch jules-16538662470356874821-26aff20b
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   apps/admin/next-env.d.ts
+	new file:   apps/host/next-env.d.ts
+	modified:   docs/architecture.md
+	new file:   docs/decisions/0024-slug-normalization-and-reserved-routes.md
+	new file:   docs/decisions/0025-ordered-real-time-live-queue-updates.md
+	new file:   docs/decisions/0026-max-10-paid-priority-tiers-and-fixed-color-slots.md
+	new file:   docs/decisions/0027-free-line-neutral-design-and-tier-snapshotting.md
+	modified:   docs/domain-model.md
+	modified:   docs/entity-relationships.md
+	modified:   docs/payment-model.md
+	modified:   docs/queue-model.md
+	modified:   packages/database/prisma/migrations/20260803000000_init_thequeue_schema/migration.sql
+	modified:   packages/database/prisma/schema.prisma
+	modified:   packages/database/src/__tests__/database-domain.test.ts
+	modified:   packages/types/src/index.ts
+	modified:   packages/validation/src/__tests__/validation.test.ts
+	modified:   packages/validation/src/index.ts
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	git_diagnostic_output.txt
+
+=== CURRENT BRANCH ===
+jules-16538662470356874821-26aff20b
+=== GIT LOG ===
+f325462 (HEAD -> jules-16538662470356874821-26aff20b) feat: initialize TheQueue production database schema
+afb796c feat: initialize TheQueue production foundation architecture
+61b4987 (main) Initial commit
+=== REMOTES ===
+origin	https://github.com/abakedjoetato/Hookline-Reveiws (fetch)
+origin	https://github.com/abakedjoetato/Hookline-Reveiws (push)
+=== BRANCH DETAILED ===
+* jules-16538662470356874821-26aff20b f325462 feat: initialize TheQueue production database schema
+  main                                61b4987 [origin/main: gone] Initial commit
+=== REMOTE HEADS ===
+906baeee3addc1f400c1ba2450cdbdb158e979a7	refs/heads/feature/thequeue-foundation-16538662470356874821
