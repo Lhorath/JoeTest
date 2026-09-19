@@ -11,7 +11,7 @@
   "packageManager": "npm@10.8.2",
   "scripts": {
     "dev": "npm run dev --workspace=apps/web",
-    "build": "npm run build --workspace=web",
+    "build": "npm run db:generate --workspace=@platform/database && npm run build --workspace=web",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
@@ -20,7 +20,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,css}\"",
     "db:generate": "turbo db:generate",
     "db:migrate": "turbo db:migrate",
-    "build:web": "npm run build --workspace=web",
+    "build:web": "npm run db:generate --workspace=@platform/database && npm run build --workspace=web",
     "start:web": "npm run start --workspace=web",
     "build:host": "npm run build --workspace=host",
     "start:host": "npm run start --workspace=host",
