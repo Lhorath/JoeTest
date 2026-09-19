@@ -1,0 +1,41 @@
+name: Configure Railway services
+
+on:
+  workflow_dispatch:
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli
+
+      - name: Configure web
+        run: |
+          railway environment edit --service-config web build.buildCommand "npm run build:web" --yes
+          railway environment edit --service-config web deploy.startCommand "npm run start:web" --yes
+
+      - name: Configure API
+        run: |
+          railway environment edit --service-config api build.buildCommand "npm run build:api" --yes
+          railway environment edit --service-config api deploy.startCommand "npm run start:api" --yes
+
+      - name: Configure host
+        run: |
+          railway environment edit --service-config host build.buildCommand "npm run build:host" --yes
+          railway environment edit --service-config host deploy.startCommand "npm run start:host" --yes
+
+      - name: Configure admin
+        run: |
+          railway environment edit --service-config admin build.buildCommand "npm run build:admin" --yes
+          railway environment edit --service-config admin deploy.startCommand "npm run start:admin" --yes
+
+      - name: Configure worker
+        run: |
+          railway environment edit --service-config worker build.buildCommand "npm run build:worker" --yes
+          railway environment edit --service-config worker deploy.startCommand "npm run start:worker" --yes
