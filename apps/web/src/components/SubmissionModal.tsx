@@ -53,10 +53,8 @@ const SpotifyIcon = ({ className = "h-3.5 w-3.5" }: { className?: string }) => (
   </svg>
 );
 
-const stripePromise = loadStripe(
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
-    "pk_test_TYooMQauvdEDq54NiTphI7jx",
-);
+const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
+const stripePromise = publishableKey ? loadStripe(publishableKey) : Promise.resolve(null);
 
 interface SubmissionModalProps {
   isOpen: boolean;
@@ -92,7 +90,14 @@ const StripePaymentForm: React.FC<{
 
     try {
       if (clientSecret.startsWith("pi_mock_")) {
-        // Preview/Development simulated payment intent
+        if (
+          process.env.NODE_ENV === "production" ||
+          process.env.NEXT_PUBLIC_APP_ENV === "production"
+        ) {
+          onError("Payment could not be completed");
+          setIsProcessing(false);
+          return;
+        }
         setTimeout(() => {
           setIsProcessing(false);
           onSuccess();

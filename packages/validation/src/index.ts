@@ -47,6 +47,147 @@ const stripeSchema = {
   STRIPE_WEBHOOK_SECRET: z.string().min(1, "STRIPE_WEBHOOK_SECRET is required"),
 };
 
+const LOCAL_SANDBOX =
+  /(localhost|127\.0\.0\.1|0\.0\.0\.0|mailpit|minio)/i;
+
+const PLACEHOLDER_WEBHOOK_SECRETS = new Set([
+  "whsec_key",
+  "whsec_test",
+  "whsec_dummy",
+  "whsec_placeholder",
+]);
+
+export function devFixturesAllowed(
+  env: Record<string, unknown> = process.env,
+): boolean {
+  if (env.NODE_ENV === "production") return false;
+  if (env.ENABLE_DEV_FIXTURES === "true" || env.ENABLE_DEV_FIXTURES === true) {
+    return true;
+  }
+  return env.NODE_ENV === "test" && env.ENABLE_DEV_FIXTURES !== "false";
+}
+
+function enforceProductionSafety(
+  data: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+  urlFields: string[],
+): void {
+  if (data.NODE_ENV !== "production") return;
+
+  if (data.ENABLE_DEV_FIXTURES === "true" || data.ENABLE_DEV_FIXTURES === true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ENABLE_DEV_FIXTURES"],
+      message: "Development fixtures cannot be enabled in production",
+    });
+  }
+
+  for (const field of urlFields) {
+    const value = data[field];
+    if (
+      field === "S3_ENDPOINT" &&
+      (typeof value !== "string" || value.length === 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message:
+          "S3_ENDPOINT is required in production. Use the Cloudflare R2 S3 endpoint.",
+      });
+      continue;
+    }
+    if (typeof value === "string" && LOCAL_SANDBOX.test(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `${field} must not use a local or sandbox host in production`,
+      });
+    }
+  }
+
+  const secretKey = data.STRIPE_SECRET_KEY;
+  if (typeof secretKey === "string" && !secretKey.startsWith("sk_live_")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["STRIPE_SECRET_KEY"],
+      message: "Production requires a live Stripe secret key (sk_live_)",
+    });
+  }
+
+  const webhookSecret = data.STRIPE_WEBHOOK_SECRET;
+  if (typeof webhookSecret === "string") {
+    const rotated =
+      webhookSecret.startsWith("whsec_") &&
+      webhookSecret.length >= 20 &&
+      !PLACEHOLDER_WEBHOOK_SECRETS.has(webhookSecret);
+    if (!rotated) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["STRIPE_WEBHOOK_SECRET"],
+        message:
+          "Production requires a newly generated Stripe webhook signing secret",
+      });
+    }
+  }
+
+  const publishable = data.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+  if (typeof publishable === "string" && !publishable.startsWith("pk_live_")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"],
+      message: "Production requires a live Stripe publishable key (pk_live_)",
+    });
+  }
+
+  const origins = data.CORS_ALLOWED_ORIGINS;
+  if (typeof origins === "string") {
+    const list = origins.split(",").map((item) => item.trim()).filter(Boolean);
+    if (list.length === 0 || list.includes("*")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["CORS_ALLOWED_ORIGINS"],
+        message: "Production CORS must be an explicit HTTPS allowlist",
+      });
+    }
+    for (const origin of list) {
+      if (!origin.startsWith("https://") || LOCAL_SANDBOX.test(origin)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["CORS_ALLOWED_ORIGINS"],
+          message: `Production origin must be HTTPS and non-local: ${origin}`,
+        });
+      }
+    }
+  }
+
+  for (const field of ["SMTP_USER", "SMTP_PASS"] as const) {
+    const value = data[field];
+    if (typeof value !== "string" || value.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `${field} is required for production email delivery`,
+      });
+    }
+  }
+
+  for (const field of [
+    "NEXT_PUBLIC_WEB_URL",
+    "NEXT_PUBLIC_HOST_URL",
+    "NEXT_PUBLIC_ADMIN_URL",
+    "NEXT_PUBLIC_API_URL",
+  ]) {
+    const value = data[field];
+    if (typeof value === "string" && !value.startsWith("https://")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `${field} must be an https URL in production`,
+      });
+    }
+  }
+}
+
 const publicUrlsSchema = {
   NEXT_PUBLIC_APP_ENV: z
     .enum(["development", "test", "production"])
@@ -82,25 +223,87 @@ export const apiEnvSchema = z.object({
   ENABLE_SWAGGER: z
     .preprocess((val) => val === "true" || val === true, z.boolean())
     .default(false),
-});
+  ENABLE_DEV_FIXTURES: z.string().optional(),
+}).superRefine((data, ctx) =>
+  enforceProductionSafety(data, ctx, [
+    "DATABASE_URL",
+    "REDIS_URL",
+    "S3_ENDPOINT",
+    "SMTP_HOST",
+  ]),
+);
 
 export type ApiEnvConfig = z.infer<typeof apiEnvSchema>;
 
-export const workerEnvSchema = z.object({
-  NODE_ENV: infrastructureSchema.NODE_ENV,
-  REDIS_URL: infrastructureSchema.REDIS_URL,
-  ...s3Schema,
-  ...smtpSchema,
-  WORKER_PORT: z.coerce.number().int().default(4001),
-  WORKER_CONCURRENCY: z.coerce.number().int().default(5),
-});
+export const workerEnvSchema = z
+  .object({
+    NODE_ENV: infrastructureSchema.NODE_ENV,
+    DATABASE_URL: infrastructureSchema.DATABASE_URL,
+    REDIS_URL: infrastructureSchema.REDIS_URL,
+    ...s3Schema,
+    ...smtpSchema,
+    ENABLE_DEV_FIXTURES: z.string().optional(),
+    WORKER_PORT: z.coerce.number().int().default(4001),
+    WORKER_CONCURRENCY: z.coerce.number().int().default(5),
+  })
+  .superRefine((data, ctx) =>
+    enforceProductionSafety(data, ctx, [
+      "DATABASE_URL",
+      "REDIS_URL",
+      "S3_ENDPOINT",
+      "SMTP_HOST",
+    ]),
+  );
 
 export type WorkerEnvConfig = z.infer<typeof workerEnvSchema>;
 
-export const frontendEnvSchema = z.object({
-  NODE_ENV: infrastructureSchema.NODE_ENV,
-  ...publicUrlsSchema,
-});
+export const frontendEnvSchema = z
+  .object({
+    NODE_ENV: infrastructureSchema.NODE_ENV,
+    ...publicUrlsSchema,
+    ENABLE_DEV_FIXTURES: z.string().optional(),
+  })
+  .superRefine((data, ctx) => enforceProductionSafety(data, ctx, []));
+
+export const webServerEnvSchema = frontendEnvSchema.and(
+  z
+    .object({
+      DATABASE_URL: infrastructureSchema.DATABASE_URL,
+      ...s3Schema,
+      ...smtpSchema,
+      ...stripeSchema,
+      SESSION_SECRET: z.string().min(32),
+      ADMIN_BOOTSTRAP_EMAIL: z.string().email(),
+      ADMIN_BOOTSTRAP_USERNAME: z.string().min(3),
+      ADMIN_BOOTSTRAP_PASSWORD: z.string().min(12),
+      ENABLE_DEV_FIXTURES: z.string().optional(),
+    })
+    .superRefine((data, ctx) =>
+      enforceProductionSafety(data, ctx, [
+        "DATABASE_URL",
+        "S3_ENDPOINT",
+        "SMTP_HOST",
+      ]),
+    ),
+);
+
+export type WebServerEnvConfig = z.infer<typeof webServerEnvSchema>;
+
+export function validateWebServerEnv(
+  config: Record<string, unknown>,
+): WebServerEnvConfig {
+  const result = webServerEnvSchema.safeParse(config);
+  if (!result.success) {
+    const errorDetails = result.error.errors
+      .map((err) => `  - ${err.path.join(".")}: ${err.message}`)
+      .join("\n");
+    console.error(
+      "❌ Invalid web production environment variables:\n" + errorDetails,
+    );
+    throw new Error("Web environment validation failed");
+  }
+  return result.data;
+}
 
 export type FrontendEnvConfig = z.infer<typeof frontendEnvSchema>;
 

@@ -5,9 +5,12 @@ import {
   sanitizeUser,
   StoredUser,
   recordLegalAcceptance,
+  createEmailVerificationToken,
 } from "@/lib/server-state";
 import { Role, AccountStatus } from "@platform/types";
 import { TERMS_METADATA } from "@platform/config";
+import { hashPassword } from "@/lib/passwords";
+import { sendVerificationEmail } from "@/lib/transactional-mail";
 
 export const dynamic = "force-dynamic";
 
@@ -79,9 +82,9 @@ export async function POST(request: NextRequest) {
       email,
       username,
       displayName,
-      passwordHash: password,
+      passwordHash: await hashPassword(password),
       accountStatus: AccountStatus.ACTIVE,
-      emailVerified: true,
+      emailVerified: process.env.NODE_ENV !== "production",
       bio: "",
       avatarUrl: null,
       country: null,
@@ -116,6 +119,11 @@ export async function POST(request: NextRequest) {
       ipAddress: ip,
       userAgent,
     });
+
+    if (process.env.NODE_ENV === "production") {
+      const verificationToken = createEmailVerificationToken(newUser.id);
+      await sendVerificationEmail(email, verificationToken);
+    }
 
     const { cookie } = createSessionForUser(newUser.id, ip, userAgent);
 

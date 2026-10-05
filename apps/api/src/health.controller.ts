@@ -59,7 +59,13 @@ export class HealthController {
     // 2. Verify Redis Client
     let redisClient: Redis | null = null;
     try {
-      const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+      const redisUrl =
+        process.env.REDIS_URL ||
+        (process.env.NODE_ENV === "production" ? "" : "redis://localhost:6379");
+      if (!redisUrl) {
+        allHealthy = false;
+        throw new Error("REDIS_URL is not configured");
+      }
       redisClient = new Redis(redisUrl, {
         maxRetriesPerRequest: 0,
         connectTimeout: 2000,

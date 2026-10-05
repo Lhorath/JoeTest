@@ -397,6 +397,11 @@ export async function getDbLegalAcceptancesForUser(userId: string) {
   }
 }
 
+export {
+  endInactiveLiveSessions,
+  expirePriorityReservations,
+} from "./maintenance";
+
 export async function hasUserAcceptedCurrentVersionInDb(
   userId: string,
   slug: string,

@@ -5,7 +5,11 @@ import { createLogger } from "@platform/logger";
 import { APP_PORTS } from "@platform/config";
 import { validateWorkerEnv } from "@platform/validation";
 import { MediaJobName } from "@platform/types";
-import { PrismaClient } from "@platform/database";
+import {
+  PrismaClient,
+  endInactiveLiveSessions,
+  expirePriorityReservations,
+} from "@platform/database";
 import { StorageService } from "./storage.service";
 import { AudioMetadataProcessor } from "./processors/audio-metadata.processor";
 import { ArtworkProcessor } from "./processors/artwork.processor";
@@ -25,7 +29,11 @@ try {
   process.exit(1);
 }
 
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+const redisUrl = process.env.REDIS_URL;
+if (!redisUrl) {
+  logger.error("REDIS_URL is required");
+  throw new Error("REDIS_URL is required");
+}
 
 // 1. Shared Redis Connection Settings
 const connectionConfig = {
@@ -195,6 +203,30 @@ app.get("/metrics", (_req, res) => {
   });
 });
 
+let maintenanceTimer: NodeJS.Timeout | null = null;
+async function runMaintenance() {
+  try {
+    const ended = await endInactiveLiveSessions(prisma);
+    if (ended.length > 0) {
+      logger.info(`AUTO_ENDED_INACTIVITY count=${ended.length}`);
+    }
+  } catch (error) {
+    logger.error("Inactivity sweep failed", error);
+  }
+  try {
+    const expired = await expirePriorityReservations(prisma);
+    if (expired > 0) {
+      logger.info(`Expired priority reservations count=${expired}`);
+    }
+  } catch (error) {
+    logger.error("Reservation expiry failed", error);
+  }
+}
+void runMaintenance();
+maintenanceTimer = setInterval(() => {
+  void runMaintenance();
+}, 60_000);
+
 const healthPort = process.env.PORT || APP_PORTS.worker;
 const healthServer = app.listen(healthPort, () => {
   logger.info(
@@ -205,6 +237,8 @@ const healthServer = app.listen(healthPort, () => {
 // 5. Graceful Shutdown Handler
 async function gracefulShutdown(signal: string) {
   logger.info(`Received ${signal}. Starting graceful shutdown...`);
+
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
 
   healthServer.close(() => {
     logger.info("Internal health server closed");
@@ -219,6 +253,7 @@ async function gracefulShutdown(signal: string) {
   logger.info("Disconnecting Redis connections...");
   workerRedisConnection.disconnect();
   testQueueRedisConnection.disconnect();
+  await prisma.$disconnect();
   logger.info("Redis connections disconnected");
 
   logger.info("Worker application shutdown complete. Exiting.");

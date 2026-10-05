@@ -7,10 +7,16 @@ The monorepo keeps Railway build and start commands in the root package.json.
 | Service | Build | Start |
 | --- | --- | --- |
 | web | `npm run build:web` | `npm run start:web` |
-| api | `npm run build:api` | `npm run start:api` |
+| api | `npm run build:api` | `npm run db:migrate:deploy && npm run start:prod --workspace=api` |
 | host | `npm run build:host` | `npm run start:host` |
 | admin | `npm run build:admin` | `npm run start:admin` |
 | worker | `npm run build:worker` | `npm run start:worker` |
+
+Service config files live in `deploy/railway/`. Apply migrations with `npm run db:migrate:deploy` before the API serves traffic. Do not run `prisma db push` or `prisma migrate dev` in production.
+
+`npm run start:web`, `start:host`, and `start:admin` bind `PORT` from the environment (3000/3001/3002 only when `PORT` is unset).
+
+Health checks: web `GET /api/v1/health`, host and admin `GET /api/health`, API `GET /api/v1/health` and `GET /api/v1/readiness`, worker `GET /health` and `GET /readiness`.
 
 The API build generates the Prisma client before compiling the NestJS application.
 

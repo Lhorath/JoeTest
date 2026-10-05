@@ -36,13 +36,14 @@ async function bootstrap() {
   // 1. Security Headers & CORS (Using an explicit environment-defined allowlist)
   app.use(helmet());
 
-  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS
-    ? process.env.CORS_ALLOWED_ORIGINS.split(",")
-    : [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-      ];
+  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (allowedOrigins.length === 0 || allowedOrigins.includes("*")) {
+    logger.error("CORS_ALLOWED_ORIGINS must be an explicit allowlist");
+    process.exit(1);
+  }
 
   app.enableCors({
     origin: allowedOrigins,
@@ -96,9 +97,7 @@ async function bootstrap() {
       .build();
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup("docs", app, document);
-    logger.info(
-      `Swagger documentation initialized at http://localhost:${APP_PORTS.api}/docs`,
-    );
+    logger.info(`Swagger documentation initialized at /docs`);
   }
 
   // 6. Graceful Shutdown

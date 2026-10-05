@@ -20,6 +20,11 @@
     "@platform/validation": "*",
     "@platform/api-client": "*",
     "@platform/database": "*",
+    "@aws-sdk/client-s3": "^3.1105.0",
+    "@aws-sdk/s3-request-presigner": "^3.1105.0",
+    "argon2": "^0.40.1",
+    "nodemailer": "^9.0.4",
+    "stripe": "^22.5.0",
     "@stripe/stripe-js": "^4.8.0",
     "@stripe/react-stripe-js": "^2.8.1",
     "socket.io-client": "^4.8.3"
@@ -28,6 +33,7 @@
   "devDependencies": {
     "typescript": "^5.6.3",
     "@types/node": "^20.11.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "postcss": "^8.4.47",

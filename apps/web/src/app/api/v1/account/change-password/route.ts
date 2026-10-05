@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverDb, getAuthenticatedUser } from "@/lib/server-state";
+import { hashPassword, passwordMatches } from "@/lib/passwords";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
     const cookieHeader = request.headers.get("cookie");
-    const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+    const user = getAuthenticatedUser(cookieHeader);
 
     if (!user) {
       return NextResponse.json(
@@ -26,14 +27,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (currentPassword && user.passwordHash && user.passwordHash !== currentPassword) {
+    if (
+      currentPassword &&
+      user.passwordHash &&
+      !(await passwordMatches(user.passwordHash, currentPassword))
+    ) {
       return NextResponse.json(
         { message: "Current password is incorrect", code: "INVALID_CREDENTIALS" },
         { status: 400 },
       );
     }
 
-    user.passwordHash = newPassword;
+    user.passwordHash = await hashPassword(newPassword);
     user.updatedAt = new Date().toISOString();
     serverDb.users.set(user.id, user);
 

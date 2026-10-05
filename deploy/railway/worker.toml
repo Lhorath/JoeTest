@@ -1,0 +1,8 @@
+[build]
+buildCommand = "npm run build:worker"
+
+[deploy]
+startCommand = "npm run start:worker"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"

@@ -6,6 +6,12 @@ import {
   QueueStatus,
   LiveSessionStatus,
 } from "@platform/types";
+import { allowMockPayments, createPriorityPaymentIntent } from "@/lib/stripe-server";
+import {
+  hostCanAcceptPriorityPayments,
+  rememberPaymentHold,
+  resolveStationHostUserId,
+} from "@/lib/payment-settlement";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +20,13 @@ export async function POST(
   { params }: { params: { id: string } },
 ) {
   const cookieHeader = req.headers.get("cookie");
-  const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+  const user = getAuthenticatedUser(cookieHeader);
+  if (!user) {
+    return NextResponse.json(
+      { message: "Authentication required", code: "UNAUTHORIZED" },
+      { status: 401 },
+    );
+  }
 
   const submission = serverDb.submissions.get(params.id);
   if (!submission) {
@@ -25,7 +37,7 @@ export async function POST(
   }
 
   // Authorization check
-  if (user && submission.submittingUserId !== user.id) {
+  if (submission.submittingUserId !== user.id) {
     return NextResponse.json(
       { message: "Forbidden: You do not own this submission", code: "FORBIDDEN" },
       { status: 403 },
@@ -67,6 +79,70 @@ export async function POST(
       { message: "Invalid priority tier", code: "INVALID_TIER" },
       { status: 400 },
     );
+  }
+
+  if (!allowMockPayments()) {
+    const hostUserId = resolveStationHostUserId(session.stationId);
+    const payout = hostUserId ? serverDb.payoutAccounts.get(hostUserId) : undefined;
+    if (!hostUserId || !payout || !hostCanAcceptPriorityPayments(hostUserId)) {
+      return NextResponse.json(
+        {
+          message: "This host cannot accept priority payments yet",
+          code: "HOST_PAYOUTS_NOT_READY",
+        },
+        { status: 409 },
+      );
+    }
+    const queue = serverDb.queues.get(submission.liveSessionId) || [];
+    const entry = queue.find((item) => item.submissionId === submission.id);
+    try {
+      const created = await createPriorityPaymentIntent({
+        amountCents: selectedTier.priceCents,
+        connectedAccountId: payout.providerAccountId,
+        submissionId: submission.id,
+        liveSessionId: submission.liveSessionId,
+        tierSnapshotId: selectedTier.tierSnapshotId,
+        userId: user.id,
+      });
+      rememberPaymentHold({
+        paymentIntentId: created.paymentIntentId,
+        submissionId: submission.id,
+        liveSessionId: submission.liveSessionId,
+        queueEntryId: entry?.id || submission.id,
+        tierSnapshotId: selectedTier.tierSnapshotId,
+        amountCents: selectedTier.priceCents,
+        connectedAccountId: payout.providerAccountId,
+        kind: "upgrade",
+      });
+      const response: UpgradeSubmissionResponse = {
+        submission: {
+          id: submission.id,
+          submittingUserId: submission.submittingUserId,
+          sourceTrackId: submission.sourceTrackId,
+          artistIdentityId: submission.artistIdentityId,
+          liveSessionId: submission.liveSessionId,
+          isPriority: false,
+          priorityTierSnapshotId: null,
+          currentQueueStatus: submission.currentQueueStatus,
+          submittedAt: submission.submittedAt,
+        },
+        queueEntry: {
+          id: entry?.id || submission.id,
+          liveSessionId: submission.liveSessionId,
+          submissionId: submission.id,
+          status: submission.currentQueueStatus,
+          priorityRank: entry?.priorityRank || 0,
+          sortOrder: entry?.sortOrder || 1,
+        },
+        clientSecret: created.clientSecret,
+      };
+      return NextResponse.json(response);
+    } catch {
+      return NextResponse.json(
+        { message: "Payment could not be started", code: "PAYMENT_UNAVAILABLE" },
+        { status: 503 },
+      );
+    }
   }
 
   submission.isPriority = true;
@@ -130,7 +206,7 @@ export async function POST(
           priorityRank: selectedTier.priorityRank,
           sortOrder: 1,
         },
-    clientSecret: `pi_mock_upgrade_secret_${submission.id}`,
+    clientSecret: `pi_mock_upgrade_secret_${submission.id}`, // fixture-only; production returns above
   };
 
   return NextResponse.json(response);

@@ -32,10 +32,8 @@ import {
 } from "@stripe/react-stripe-js";
 import { api } from "../lib/api";
 
-const stripePromise = loadStripe(
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
-    "pk_test_TYooMQauvdEDq54NiTphI7jx",
-);
+const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
+const stripePromise = publishableKey ? loadStripe(publishableKey) : Promise.resolve(null);
 
 interface UpgradeModalProps {
   isOpen: boolean;
@@ -69,6 +67,14 @@ const StripeUpgradePaymentForm: React.FC<{
 
     try {
       if (clientSecret.startsWith("pi_mock_")) {
+        if (
+          process.env.NODE_ENV === "production" ||
+          process.env.NEXT_PUBLIC_APP_ENV === "production"
+        ) {
+          onError("Payment could not be completed");
+          setIsProcessing(false);
+          return;
+        }
         setTimeout(() => {
           setIsProcessing(false);
           onSuccess();

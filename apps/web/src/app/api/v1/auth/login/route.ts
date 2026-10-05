@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverDb, createSessionForUser, sanitizeUser, StoredUser } from "@/lib/server-state";
+import { passwordMatches } from "@/lib/passwords";
+import { ensureProductionAdmin } from "@/lib/admin-bootstrap";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    await ensureProductionAdmin();
     const body = await request.json();
     const identifier = (body.email || body.emailOrUsername || "").toLowerCase().trim();
     const password = body.password || body.passwordPlain || "";
@@ -36,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check password
-    if (foundUser.passwordHash !== password) {
+    if (!(await passwordMatches(foundUser.passwordHash, password))) {
       return NextResponse.json(
         { message: "Invalid email/username or password", code: "INVALID_CREDENTIALS" },
         { status: 401 },

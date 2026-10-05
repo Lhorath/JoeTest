@@ -15,11 +15,17 @@ export class StorageService {
     const endpoint = process.env.S3_ENDPOINT;
     const accessKeyId = process.env.S3_ACCESS_KEY;
     const secretAccessKey = process.env.S3_SECRET_KEY;
-    this.bucket = process.env.S3_BUCKET || "thequeue-media-local";
+    this.bucket = process.env.S3_BUCKET || "";
     const forcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-    if (!region || !accessKeyId || !secretAccessKey) {
+    if (!region || !accessKeyId || !secretAccessKey || !this.bucket) {
       throw new Error("S3 environment variables are missing");
+    }
+    if (
+      process.env.NODE_ENV === "production" &&
+      (!endpoint || /localhost|127\.0\.0\.1|minio/i.test(endpoint))
+    ) {
+      throw new Error("Production object storage must use Cloudflare R2 or another non-local S3 endpoint");
     }
 
     this.s3Client = new S3Client({

@@ -8,7 +8,7 @@ export async function DELETE(
   { params }: { params: { id: string } },
 ) {
   const cookieHeader = request.headers.get("cookie");
-  const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+  const user = getAuthenticatedUser(cookieHeader);
 
   if (!user) {
     return NextResponse.json(

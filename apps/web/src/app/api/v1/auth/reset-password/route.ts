@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAndConsumePasswordResetToken } from "@/lib/server-state";
+import { hashPassword } from "@/lib/passwords";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = verifyAndConsumePasswordResetToken(token, newPassword);
+    const result = verifyAndConsumePasswordResetToken(token, await hashPassword(newPassword));
     if (!result.success) {
       return NextResponse.json(
         { message: result.message || "Invalid or expired reset token.", code: "INVALID_TOKEN" },

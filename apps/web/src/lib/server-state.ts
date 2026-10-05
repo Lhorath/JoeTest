@@ -49,6 +49,7 @@ import {
   WeeklyTop3Period,
 } from "@platform/types";
 import { RESERVED_SLUGS, slugifyHostname } from "@platform/validation";
+import { isDevFixturesEnabled } from "./runtime-mode";
 import {
   TERMS_METADATA,
   PRIVACY_METADATA,
@@ -122,6 +123,7 @@ export interface StoredTrack extends TrackSummary {
   audioDataUrl?: string;
   originalFilename?: string;
   mimeType?: string;
+  objectKey?: string;
   lastPlayedAt?: string;
 }
 
@@ -255,8 +257,63 @@ export const DEFAULT_THEME_TOKENS: ThemeTokens = {
   dangerColor: "#EF4444",
 };
 
+function randomUrlToken(): string {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
 function initDatabase() {
   if (global.__THE_QUEUE_STATE__) {
+    return global.__THE_QUEUE_STATE__;
+  }
+
+  if (process.env.NODE_ENV === "production" && process.env.ENABLE_DEV_FIXTURES === "true") {
+    throw new Error("ENABLE_DEV_FIXTURES cannot be enabled in production");
+  }
+
+  if (!isDevFixturesEnabled()) {
+    const users = new Map<string, StoredUser>();
+    const now = new Date().toISOString();
+    global.__THE_QUEUE_STATE__ = {
+      users,
+      artistIdentities: new Map(),
+      sessionTokens: new Map(),
+      passwordResetTokens: new Map(),
+      emailVerificationTokens: new Map(),
+      securityLogs: [],
+      userPreferences: new Map(),
+      themeCustomization: {
+        id: "site-customization-default",
+        siteName: "TheQueue",
+        primaryLogoUrl: null,
+        alternateLogoUrl: null,
+        faviconUrl: null,
+        tokens: { ...DEFAULT_THEME_TOKENS },
+        customCss: null,
+        updatedByUserId: "system",
+        updatedAt: now,
+      },
+      platformSettings: {
+        requireManualHostApproval: true,
+        updatedAt: now,
+        updatedByUserId: "system",
+      },
+      hostApplications: new Map(),
+      hostProfiles: new Map(),
+      stations: new Map(),
+      payoutAccounts: new Map(),
+      sessions: new Map(),
+      queues: new Map(),
+      tracks: new Map(),
+      submissions: new Map(),
+      uploadIntents: new Map(),
+      legalAcceptances: [],
+      stationPriorityTiers: new Map(),
+      playbackEvents: [],
+    };
     return global.__THE_QUEUE_STATE__;
   }
 
@@ -1509,7 +1566,7 @@ export function createSessionForUser(
   ipAddress = "127.0.0.1",
   userAgent = "Browser",
 ): { token: string; cookie: string } {
-  const token = `sess_${Math.random().toString(36).substring(2)}_${Date.now()}`;
+  const token = `sess_${randomUrlToken()}`;
   const expiresAt = new Date(Date.now() + 86400000 * 7); // 7 days
 
   const sessionRecord: StoredSessionToken = {
@@ -1652,7 +1709,7 @@ export function createPasswordResetToken(email: string): string | null {
   );
   if (!user) return null;
 
-  const token = `rst_${Math.random().toString(36).substring(2)}_${Date.now()}`;
+  const token = `rst_${randomUrlToken()}`;
   const expiresAt = new Date(Date.now() + 3600000 * 2); // 2 hours
   serverDb.passwordResetTokens.set(token, {
     token,
@@ -1703,7 +1760,7 @@ export function verifyAndConsumePasswordResetToken(
 export function createEmailVerificationToken(userId: string): string {
   const user = serverDb.users.get(userId);
   const email = user ? user.email : "";
-  const token = `vfy_${Math.random().toString(36).substring(2)}_${Date.now()}`;
+  const token = `vfy_${randomUrlToken()}`;
   const expiresAt = new Date(Date.now() + 86400000 * 3); // 3 days
 
   serverDb.emailVerificationTokens.set(token, {

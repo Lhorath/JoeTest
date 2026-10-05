@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { validateApiEnv, validateWorkerEnv, hostSlugSchema } from "../index";
+import {
+  validateApiEnv,
+  validateWorkerEnv,
+  validateWebServerEnv,
+  devFixturesAllowed,
+  hostSlugSchema,
+} from "../index";
 
 describe("Central Zod Environment Validation", () => {
   const validApiEnv = {
@@ -23,7 +29,8 @@ describe("Central Zod Environment Validation", () => {
   };
 
   const validWorkerEnv = {
-    NODE_ENV: "production",
+    NODE_ENV: "development",
+    DATABASE_URL: "postgresql://postgres:secret@localhost:5432/thequeue_dev",
     REDIS_URL: "redis://localhost:6379",
     S3_ENDPOINT: "http://localhost:9000",
     S3_REGION: "us-east-1",
@@ -72,6 +79,80 @@ describe("Central Zod Environment Validation", () => {
     it("should fail if Redis connection URL is missing", () => {
       const { REDIS_URL, ...invalidEnv } = validWorkerEnv;
       expect(() => validateWorkerEnv(invalidEnv)).toThrow();
+    });
+
+    it("should reject sandbox hosts, test Stripe keys, and dev fixtures in production", () => {
+      expect(() =>
+        validateApiEnv({
+          ...validApiEnv,
+          NODE_ENV: "production",
+          ENABLE_DEV_FIXTURES: "true",
+        }),
+      ).toThrow();
+
+      expect(() =>
+        validateWorkerEnv({
+          ...validWorkerEnv,
+          NODE_ENV: "production",
+        }),
+      ).toThrow();
+    });
+
+    it("should accept a non-local production worker configuration", () => {
+      const config = validateWorkerEnv({
+        ...validWorkerEnv,
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://app:secret@postgres.internal:5432/thequeue",
+        REDIS_URL: "redis://redis.internal:6379",
+        S3_ENDPOINT: "https://accountid.r2.cloudflarestorage.com",
+        S3_BUCKET: "thequeue-media",
+        SMTP_HOST: "smtp.resend.com",
+        SMTP_PORT: "465",
+        SMTP_USER: "resend",
+        SMTP_PASS: "re_live_secret",
+        SMTP_FROM: "noreply@thequeue.live",
+      });
+      expect(config.NODE_ENV).toBe("production");
+    });
+
+    it("should reject a production web server that still uses sandbox settings", () => {
+      expect(() =>
+        validateWebServerEnv({
+          ...validApiEnv,
+          NODE_ENV: "production",
+          NEXT_PUBLIC_APP_ENV: "production",
+          NEXT_PUBLIC_WEB_URL: "https://thequeue.example",
+          NEXT_PUBLIC_HOST_URL: "https://host.thequeue.example",
+          NEXT_PUBLIC_ADMIN_URL: "https://admin.thequeue.example",
+          NEXT_PUBLIC_API_URL: "https://api.thequeue.example",
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_placeholder",
+          ADMIN_BOOTSTRAP_EMAIL: "admin@thequeue.example",
+          ADMIN_BOOTSTRAP_USERNAME: "owner",
+          ADMIN_BOOTSTRAP_PASSWORD: "a-long-bootstrap-password",
+        }),
+      ).toThrow();
+    });
+  });
+
+  describe("devFixturesAllowed", () => {
+    it("never allows fixtures in production", () => {
+      expect(
+        devFixturesAllowed({
+          NODE_ENV: "production",
+          ENABLE_DEV_FIXTURES: "true",
+        }),
+      ).toBe(false);
+    });
+
+    it("allows fixtures only when explicitly enabled outside production", () => {
+      expect(devFixturesAllowed({ NODE_ENV: "development" })).toBe(false);
+      expect(
+        devFixturesAllowed({
+          NODE_ENV: "development",
+          ENABLE_DEV_FIXTURES: "true",
+        }),
+      ).toBe(true);
+      expect(devFixturesAllowed({ NODE_ENV: "test" })).toBe(true);
     });
   });
 

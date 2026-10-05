@@ -35,7 +35,11 @@ import { PaymentsModule } from "./payments/payments.module";
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
         const redisUrl =
-          config.get<string>("REDIS_URL") || "redis://localhost:6379";
+          config.get<string>("REDIS_URL") ||
+          (process.env.NODE_ENV === "production" ? "" : "redis://localhost:6379");
+        if (!redisUrl) {
+          throw new Error("REDIS_URL is required");
+        }
         return {
           throttlers: [
             // Default rate limit: 100 requests per 60 seconds
@@ -56,7 +60,11 @@ import { PaymentsModule } from "./payments/payments.module";
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
         const redisUrl =
-          config.get<string>("REDIS_URL") || "redis://localhost:6379";
+          config.get<string>("REDIS_URL") ||
+          (process.env.NODE_ENV === "production" ? "" : "redis://localhost:6379");
+        if (!redisUrl) {
+          throw new Error("REDIS_URL is required");
+        }
         const url = new URL(redisUrl);
         return {
           connection: {

@@ -1,7 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { PrismaClient } from "@platform/database";
-import { LiveSessionStatus } from "@platform/types";
+import { PrismaClient, endInactiveLiveSessions } from "@platform/database";
 import { LiveSessionsEventService } from "./live-sessions-event.service";
 
 @Injectable()
@@ -18,48 +17,19 @@ export class LiveSessionsCronService {
     this.logger.log("Running inactivity sweep for LiveSessions...");
 
     try {
-      const sixtyMinutesAgo = new Date(Date.now() - 60 * 60 * 1000);
-
-      const updatedSessions = await this.prisma.liveSession.findMany({
-        where: {
-          status: LiveSessionStatus.LIVE,
-          lastPlaybackActivityAt: {
-            lt: sixtyMinutesAgo,
-          }
-        },
-      });
-
-      if (updatedSessions.length === 0) {
-        return;
-      }
-
-      for (const session of updatedSessions) {
-        const result = await this.prisma.liveSession.updateMany({
-          where: {
-            id: session.id,
-            status: LiveSessionStatus.LIVE,
-            lastPlaybackActivityAt: {
-              lt: sixtyMinutesAgo,
-            },
-          },
-          data: {
-            status: LiveSessionStatus.ENDED,
-            endedAt: new Date(),
-            queueRevision: { increment: 1 },
-          },
+      const endedIds = await endInactiveLiveSessions(this.prisma);
+      for (const sessionId of endedIds) {
+        this.logger.log(`Session ${sessionId} AUTO_ENDED_INACTIVITY`);
+        const updatedSession = await this.prisma.liveSession.findUnique({
+          where: { id: sessionId },
         });
-
-        if (result.count > 0) {
-          this.logger.log(`Session ${session.id} auto-ended due to inactivity.`);
-
-          const updatedSession = await this.prisma.liveSession.findUnique({ where: { id: session.id } });
-          if (updatedSession) {
-             this.eventsService.emit(session.id, "session.ended", {
-               status: updatedSession.status,
-               endedAt: updatedSession.endedAt,
-               queueRevision: updatedSession.queueRevision,
-             });
-          }
+        if (updatedSession) {
+          this.eventsService.emit(sessionId, "session.ended", {
+            status: updatedSession.status,
+            endedAt: updatedSession.endedAt,
+            queueRevision: updatedSession.queueRevision,
+            reason: "AUTO_ENDED_INACTIVITY",
+          });
         }
       }
     } catch (error) {

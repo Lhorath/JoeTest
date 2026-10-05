@@ -5,6 +5,8 @@ import {
   CreateUploadUrlResponse,
   ProcessingState,
 } from "@platform/types";
+import { isDevFixturesEnabled } from "@/lib/runtime-mode";
+import { assertSafeAudioUpload, createAudioUploadUrl, storageConfigured } from "@/lib/object-storage";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +22,50 @@ export async function POST(req: NextRequest) {
   }
 
   const body: CreateTrackUploadUrlDto = await req.json();
+
+  if (!body.fileSize || body.fileSize > 80 * 1024 * 1024) {
+    return NextResponse.json(
+      { message: "Audio files must be 80 MB or smaller", code: "FILE_TOO_LARGE" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    assertSafeAudioUpload(body.originalFilename || "", body.mimeType || "");
+  } catch (error: unknown) {
+    return NextResponse.json(
+      {
+        message: error instanceof Error ? error.message : "Unsupported upload",
+        code: "UNSUPPORTED_MEDIA",
+      },
+      { status: 400 },
+    );
+  }
+
+  const useObjectStorage = storageConfigured() && !isDevFixturesEnabled();
+  if (process.env.NODE_ENV === "production" && !storageConfigured()) {
+    return NextResponse.json(
+      { message: "Object storage is not configured", code: "STORAGE_UNAVAILABLE" },
+      { status: 503 },
+    );
+  }
+
+  let uploadUrl = "";
+  let objectKey: string | undefined;
+  let expiresAt = new Date(Date.now() + 3600000).toISOString();
+  if (useObjectStorage) {
+    try {
+      const presigned = await createAudioUploadUrl(body.originalFilename, body.mimeType);
+      uploadUrl = presigned.uploadUrl;
+      objectKey = presigned.objectKey;
+      expiresAt = presigned.expiresAt;
+    } catch {
+      return NextResponse.json(
+        { message: "Upload URL could not be created", code: "STORAGE_UNAVAILABLE" },
+        { status: 503 },
+      );
+    }
+  }
 
   const trackId = `track_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const uploadIntentId = `intent_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -53,7 +99,7 @@ export async function POST(req: NextRequest) {
     explicitContent: Boolean(body.explicitContent),
     bpm: body.bpm || null,
     musicalKey: body.musicalKey ? body.musicalKey.trim() : null,
-    durationSeconds: Math.floor(Math.random() * 90) + 150, // simulated duration 2:30 - 4:00
+    durationSeconds: 0,
     processingState: ProcessingState.PROCESSING,
     artistIdentity: {
       id: artistIdentityId || `custom-${Date.now()}`,
@@ -61,6 +107,7 @@ export async function POST(req: NextRequest) {
     },
     originalFilename: body.originalFilename,
     mimeType: body.mimeType,
+    objectKey,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -70,8 +117,8 @@ export async function POST(req: NextRequest) {
   const response: CreateUploadUrlResponse = {
     trackId,
     uploadIntentId,
-    uploadUrl: `/api/v1/mock-upload/${uploadIntentId}`,
-    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    uploadUrl: uploadUrl || `/api/v1/mock-upload/${uploadIntentId}`,
+    expiresAt,
   };
 
   return NextResponse.json(response);

@@ -23,7 +23,8 @@ jobs:
       - name: Configure API
         run: |
           railway environment edit --service-config api build.buildCommand "npm run build:api" --yes
-          railway environment edit --service-config api deploy.startCommand "npm run start:api" --yes
+          railway environment edit --service-config api deploy.startCommand "npm run start:prod --workspace=api" --yes
+          railway environment edit --service-config api deploy.preDeployCommand "npm run db:migrate:deploy" --yes
 
       - name: Configure host
         run: |

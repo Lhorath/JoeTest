@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   const cookieHeader = request.headers.get("cookie");
-  const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+  const user = getAuthenticatedUser(cookieHeader);
 
   if (!user) {
     return NextResponse.json(

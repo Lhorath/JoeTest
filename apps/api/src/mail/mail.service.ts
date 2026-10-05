@@ -10,11 +10,20 @@ export class NodemailerMailDeliveryService implements MailDeliveryService {
   private readonly fromAddress: string;
 
   constructor(private configService: ConfigService) {
-    this.fromAddress = process.env.SMTP_FROM || "noreply@thequeue.com";
+    const isProduction = process.env.NODE_ENV === "production";
+    const smtpHost = process.env.SMTP_HOST || (isProduction ? "" : "localhost");
+    const smtpPort = process.env.SMTP_PORT || (isProduction ? "" : "1025");
+    if (isProduction && (!smtpHost || !smtpPort || /localhost|127\.0\.0\.1|mailpit/i.test(smtpHost))) {
+      throw new Error("Production email must use a non-local SMTP provider");
+    }
+    this.fromAddress = process.env.SMTP_FROM || (isProduction ? "" : "noreply@localhost");
+    if (isProduction && !this.fromAddress) {
+      throw new Error("SMTP_FROM is required");
+    }
 
     this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || "localhost",
-      port: parseInt(process.env.SMTP_PORT || "1025", 10),
+      host: smtpHost,
+      port: parseInt(smtpPort || "1025", 10),
       auth: process.env.SMTP_USER
         ? {
             user: process.env.SMTP_USER,

@@ -4,16 +4,18 @@ import { createApiClient } from "@platform/api-client";
 const getApiBaseUrl = () => {
   if (typeof window !== "undefined") {
     const publicUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (
-      publicUrl &&
-      !publicUrl.includes("localhost:4000") &&
-      !publicUrl.includes("127.0.0.1:4000")
-    ) {
+    if (publicUrl && !/(localhost|127\.0\.0\.1)/.test(publicUrl)) {
       return publicUrl;
     }
     return "/api/v1";
   }
-  return process.env.API_URL || "http://127.0.0.1:3000/api/v1";
+  const configured = process.env.API_URL;
+  if (configured && !/(localhost|127\.0\.0\.1)/.test(configured)) {
+    return configured;
+  }
+  // Server-side calls stay on this web process. The browser uses a relative /api/v1.
+  const port = process.env.PORT || "3000";
+  return `http://127.0.0.1:${port}/api/v1`;
 };
 
 export const api = createApiClient({

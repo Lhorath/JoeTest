@@ -7,6 +7,13 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { intentId: string } },
 ) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { message: "Direct sandbox uploads are disabled", code: "STORAGE_UNAVAILABLE" },
+      { status: 410 },
+    );
+  }
+
   const intent = serverDb.uploadIntents.get(params.intentId);
   if (!intent) {
     return NextResponse.json(

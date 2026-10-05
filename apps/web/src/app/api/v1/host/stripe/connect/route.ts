@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverDb, getAuthenticatedUser } from "@/lib/server-state";
 import { PayoutProvider, StripeConnectLinkResponse } from "@platform/types";
+import { allowMockPayments, createConnectOnboardingLink } from "@/lib/stripe-server";
 
 export const dynamic = "force-dynamic";
 
@@ -35,17 +36,45 @@ export async function POST(request: NextRequest) {
       serverDb.payoutAccounts.set(user.id, payout);
     }
 
-    // In a test/mock environment or live environment, we provide an onboarding URL
-    const baseUrl = request.nextUrl.origin;
-    const accountLinkUrl = `${baseUrl}/host/onboarding?stripe_connect=success&account_id=${payout.providerAccountId}`;
+    if (allowMockPayments()) {
+      const baseUrl = process.env.NEXT_PUBLIC_WEB_URL || request.nextUrl.origin;
+      const response: StripeConnectLinkResponse = {
+        accountLinkUrl: `${baseUrl}/host/onboarding?stripe_connect=refresh`,
+        accountId: payout.providerAccountId,
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      };
+      return NextResponse.json(response);
+    }
 
-    const response: StripeConnectLinkResponse = {
-      accountLinkUrl,
-      accountId: payout.providerAccountId,
-      expiresAt: new Date(Date.now() + 3600000).toISOString(),
-    };
+    const origin = process.env.NEXT_PUBLIC_WEB_URL || request.nextUrl.origin;
+    try {
+      const link = await createConnectOnboardingLink({
+        email: user.email,
+        userId: user.id,
+        existingAccountId: payout.providerAccountId,
+        returnUrl: `${origin}/host/onboarding?stripe_connect=return`,
+        refreshUrl: `${origin}/host/onboarding?stripe_connect=refresh`,
+      });
+      payout.providerAccountId = link.accountId;
+      payout.chargesEnabled = false;
+      payout.payoutsEnabled = false;
+      payout.detailsSubmitted = false;
+      payout.onboardingState = "IN_PROGRESS";
+      payout.updatedAt = new Date().toISOString();
+      serverDb.payoutAccounts.set(user.id, payout);
 
-    return NextResponse.json(response);
+      const response: StripeConnectLinkResponse = {
+        accountLinkUrl: link.url,
+        accountId: link.accountId,
+        expiresAt: link.expiresAt,
+      };
+      return NextResponse.json(response);
+    } catch {
+      return NextResponse.json(
+        { message: "Stripe Connect is not available", code: "STRIPE_UNAVAILABLE" },
+        { status: 503 },
+      );
+    }
   } catch (error: any) {
     return NextResponse.json(
       { message: error?.message || "Failed to create Stripe Connect link", code: "INTERNAL_ERROR" },

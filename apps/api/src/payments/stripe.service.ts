@@ -16,6 +16,11 @@ export class StripeService {
         "STRIPE_SECRET_KEY is not defined in environment",
       );
     }
+    if (process.env.NODE_ENV === "production" && !secretKey.startsWith("sk_live_")) {
+      throw new InternalServerErrorException(
+        "Production requires a live Stripe secret key",
+      );
+    }
 
     this.webhookSecret =
       this.configService.get<string>("STRIPE_WEBHOOK_SECRET") || "";

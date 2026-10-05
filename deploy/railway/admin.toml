@@ -1,0 +1,8 @@
+[build]
+buildCommand = "npm run build:admin"
+
+[deploy]
+startCommand = "npm run start:admin"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"

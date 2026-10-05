@@ -1,0 +1,9 @@
+[build]
+buildCommand = "npm run build:api"
+
+[deploy]
+preDeployCommand = "npm run db:migrate:deploy"
+startCommand = "npm run start:prod --workspace=api"
+healthcheckPath = "/api/v1/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"

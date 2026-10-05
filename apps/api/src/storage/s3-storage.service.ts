@@ -27,8 +27,14 @@ export class S3StorageService implements StorageService, OnModuleInit {
     const endpoint = process.env.S3_ENDPOINT;
     const accessKeyId = process.env.S3_ACCESS_KEY || (process.env.NODE_ENV === "test" ? "test-key" : undefined);
     const secretAccessKey = process.env.S3_SECRET_KEY || (process.env.NODE_ENV === "test" ? "test-secret" : undefined);
-    this.bucket = process.env.S3_BUCKET || "thequeue-media-local";
+    this.bucket = process.env.S3_BUCKET || (process.env.NODE_ENV === "production" ? "" : "thequeue-media-local");
     const forcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
+
+    if (process.env.NODE_ENV === "production") {
+      if (!endpoint || /localhost|127\.0\.0\.1|minio/i.test(endpoint) || !this.bucket) {
+        throw new Error("Production object storage must use a non-local S3-compatible endpoint such as Cloudflare R2");
+      }
+    }
 
     if (!region || !accessKeyId || !secretAccessKey) {
       if (process.env.NODE_ENV !== "test") {

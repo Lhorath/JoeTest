@@ -972,6 +972,7 @@ model LiveSession {
   @@map("live_sessions")
   @@index([status])
   @@index([stationId, status])
+  @@index([status, lastPlaybackActivityAt])
 }
 
 model LiveSessionPlatform {

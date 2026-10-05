@@ -18,7 +18,10 @@ export class AuthProtectionService {
     const isTest = process.env.NODE_ENV === "test";
     const redisUrl =
       process.env[isTest ? "TEST_REDIS_URL" : "REDIS_URL"] ||
-      "redis://localhost:6379";
+      (process.env.NODE_ENV === "production" ? "" : "redis://localhost:6379");
+    if (!redisUrl) {
+      throw new Error("REDIS_URL is required");
+    }
     this.redisClient = new Redis(redisUrl, {
       maxRetriesPerRequest: 1, // Don't hang forever if Redis is down
       enableOfflineQueue: false,
@@ -57,12 +60,13 @@ export class AuthProtectionService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
 
-      // If Redis fails, we log it but fail safe (allow the request if we can't check lockout).
-      // A more strict security posture would deny, but that risks a platform outage if Redis blips.
-      this.logger.error(
-        "Failed to check Redis lockout status. Failing safe (allowing).",
-        error,
-      );
+      this.logger.error("Failed to check Redis lockout status", error);
+      if (process.env.NODE_ENV === "production") {
+        throw new HttpException(
+          "Authentication is temporarily unavailable",
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
     }
   }
 

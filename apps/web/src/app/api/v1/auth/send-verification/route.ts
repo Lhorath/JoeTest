@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser, createEmailVerificationToken } from "@/lib/server-state";
+import { isDevFixturesEnabled } from "@/lib/runtime-mode";
+import { sendVerificationEmail } from "@/lib/transactional-mail";
 
 export const dynamic = "force-dynamic";
 
@@ -16,16 +18,12 @@ export async function POST(request: NextRequest) {
     }
 
     const token = createEmailVerificationToken(user.id);
-
-    // In non-production logging or preview environments:
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[AUTH] Email verification token generated for ${user.email}: ${token}`);
-    }
+    await sendVerificationEmail(user.email, token);
 
     return NextResponse.json({
       success: true,
       message: "Verification email generated.",
-      token: process.env.NODE_ENV !== "production" ? token : undefined,
+      token: isDevFixturesEnabled() ? token : undefined,
     });
   } catch (error: any) {
     return NextResponse.json(

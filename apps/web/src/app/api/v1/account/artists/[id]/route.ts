@@ -15,7 +15,7 @@ export async function GET(
   { params }: { params: { id: string } },
 ) {
   const cookieHeader = request.headers.get("cookie");
-  const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+  const user = getAuthenticatedUser(cookieHeader);
 
   if (!user) {
     return NextResponse.json(
@@ -49,7 +49,7 @@ export async function PATCH(
 ) {
   try {
     const cookieHeader = request.headers.get("cookie");
-    const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+    const user = getAuthenticatedUser(cookieHeader);
 
     if (!user) {
       return NextResponse.json(
@@ -111,7 +111,7 @@ export async function DELETE(
 ) {
   try {
     const cookieHeader = request.headers.get("cookie");
-    const user = getAuthenticatedUser(cookieHeader) || serverDb.users.get("user-demo");
+    const user = getAuthenticatedUser(cookieHeader);
 
     if (!user) {
       return NextResponse.json(
